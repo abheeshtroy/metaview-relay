@@ -5,13 +5,21 @@ import {
   claimTemplates,
   openQuestionAtStart,
   people,
-  interviewQuestion,
-  scriptedInterviewAnswer,
+  interviewScripts,
+  scriptedAddendum,
   scriptedNote,
+  type QuestionId,
 } from './fixtures';
 import {
+  excerptBelongsTo,
+  scriptedAssist,
+  type QuestionSuggestion,
+} from './interviewAssist';
+import {
   candidateView,
+  claimBadge,
   initialState,
+  interviewTransitions,
   lastCrossing,
   recruiterView,
   reduce,
@@ -339,126 +347,442 @@ describe('edited clarification answers', () => {
   });
 });
 
-describe('interview stage', () => {
-  const ownWords =
-    'Bit of both, honestly. I owned the runtime for the first year, then handed it to the platform team and moved to release tooling.';
-  const reviewed: RelayEvent[] = [
-    note,
-    answer(0),
-    { type: 'claim-accepted', claimId: 'latency' },
-    { type: 'claim-accepted', claimId: 'rollout' },
-    { type: 'claim-accepted', claimId: 'validation' },
-  ];
-  const started: RelayEvent[] = [...reviewed, { type: 'interview-started' }];
+describe('claim badge after a human decision', () => {
+  const claim = (events: RelayEvent[], id = 'rollout') =>
+    reduce(events).claims.find((c) => c.id === id)!;
 
-  it('enters Interview only after Apply & Context has human-reviewed every claim', () => {
-    expect(reduce([...reviewed.slice(0, -1), { type: 'interview-started' }]).stage).toBe(
-      'review',
+  it('says inferred only while the claim is still waiting on review', () => {
+    expect(claimBadge(claim([note, answer(0)])).label).toBe(
+      'Inferred · not yet clarified',
     );
-    const state = reduce(started);
-    expect(state.stage).toBe('interview');
-    expect(state.interview?.status).toBe('ready');
-    expect(lastCrossing(state)?.text).toContain('moved Jeremy into the interview stage');
   });
 
-  it('generates the interview brief from accepted and unresolved context', () => {
-    const state = reduce(started);
-    expect(recruiterView(state).brief).toContainEqual({
-      kind: 'strength',
-      text: 'Inference under hard latency budgets',
-    });
-
-    const unresolved = reduce([
+  it('stops saying inferred once James accepts or corrects it', () => {
+    const accepted = claim([
       note,
-      {
-        type: 'clarification-answered',
-        answerId: clarification.answers[0].id,
-        text: ownWords,
-      },
-      { type: 'claim-left-unresolved', claimId: 'latency' },
+      answer(0),
       { type: 'claim-accepted', claimId: 'rollout' },
-      { type: 'claim-accepted', claimId: 'validation' },
-      { type: 'interview-started' },
     ]);
-    expect(recruiterView(unresolved).brief).toContainEqual({
-      kind: 'open',
-      text: openQuestionAtStart,
+    expect(claimBadge(accepted)).toEqual({
+      label: 'Accepted by James · not clarified by Jeremy',
+      tone: 'decided',
+    });
+    const corrected = claim([
+      note,
+      answer(0),
+      { type: 'claim-corrected', claimId: 'rollout', note: 'Release engineering.' },
+    ]);
+    expect(claimBadge(corrected).label).toBe('Relay’s reading replaced by James');
+  });
+
+  it('keeps Jeremy’s clarification visible on an accepted claim', () => {
+    const accepted = claim(
+      [note, answer(0), { type: 'claim-accepted', claimId: 'latency' }],
+      'latency',
+    );
+    expect(claimBadge(accepted).label).toBe('Clarified by Jeremy');
+  });
+});
+
+// ---------- Interview: Prepare → Interview → Recap → Debrief ----------
+
+const decideAll = (corrected = false): RelayEvent[] => [
+  { type: 'claim-accepted', claimId: 'latency' },
+  { type: 'claim-accepted', claimId: 'rollout' },
+  corrected
+    ? {
+        type: 'claim-corrected',
+        claimId: 'validation',
+        note: 'Closer to QA here; probe it.',
+      }
+    : { type: 'claim-accepted', claimId: 'validation' },
+];
+
+function prepOpened(before: RelayEvent[]): RelayEvent {
+  return {
+    type: 'interview-prep-opened',
+    suggestions: scriptedAssist.suggestQuestions({
+      openQuestion: reduce(before).openQuestion.text,
+    }),
+  };
+}
+
+function held(before: RelayEvent[]): RelayEvent {
+  const interview = reduce(before).interview!;
+  const question = interview.suggestions.find((s) => s.id === interview.questionId)!;
+  return { type: 'interview-held', ...scriptedAssist.extractExcerpt({ question })! };
+}
+
+/** Apply path A, then the interview up to (and including) the given step. */
+function flow(
+  until: 'prepare' | 'scheduled' | 'call' | 'recap' | 'debrief' | 'closed',
+  options: { pick?: 'targeted' | 'broad'; addendum?: string; corrected?: boolean } = {},
+): RelayEvent[] {
+  const events: RelayEvent[] = [note, answer(0), ...decideAll(options.corrected)];
+  events.push(prepOpened(events));
+  if (until === 'prepare') return events;
+  const suggestions = reduce(events).interview!.suggestions;
+  const pick = suggestions.find((s) => s.kind === (options.pick ?? 'targeted'))!;
+  events.push({ type: 'interview-plan-approved', questionId: pick.id });
+  if (until === 'scheduled') return events;
+  events.push({ type: 'interview-call-started' });
+  if (until === 'call') return events;
+  events.push(held(events));
+  if (until === 'recap') return events;
+  events.push({ type: 'interview-recap-confirmed', addendum: options.addendum });
+  if (until === 'debrief') return events;
+  events.push({
+    type: 'interview-debriefed',
+    outcome: 'still-open',
+    note: 'Want the hiring manager’s view on shared GPU scheduling.',
+  });
+  return events;
+}
+
+describe('interview phase transitions', () => {
+  it('moves strictly forward, one step per event', () => {
+    expect(Object.values(interviewTransitions)).toEqual([
+      { from: 'prepare', to: 'scheduled' },
+      { from: 'scheduled', to: 'call' },
+      { from: 'call', to: 'recap' },
+      { from: 'recap', to: 'debrief' },
+      { from: 'debrief', to: 'closed' },
+    ]);
+    const order = ['prepare', 'scheduled', 'call', 'recap', 'debrief', 'closed'] as const;
+    expect(order.map((p) => reduce(flow(p)).interview?.phase)).toEqual([...order]);
+    // Each step adds exactly one event, and each event is accepted.
+    for (let i = 1; i < order.length; i++) {
+      const before = flow(order[i - 1]);
+      const after = flow(order[i]);
+      expect(after).toHaveLength(before.length + 1);
+      expect(reduce(after).trail.length).toBeGreaterThan(reduce(before).trail.length);
+    }
+  });
+
+  it('has exactly one valid next event in every phase', () => {
+    const all = flow('closed', { addendum: scriptedAddendum });
+    const steps = all.slice(-5);
+    const order = ['prepare', 'scheduled', 'call', 'recap', 'debrief', 'closed'] as const;
+    order.slice(1).forEach((phase, i) => {
+      const before = flow(order[i], { addendum: scriptedAddendum });
+      const accepted = steps.filter(
+        (event) =>
+          reduce([...before, event]).interview?.phase !== reduce(before).interview?.phase,
+      );
+      expect(accepted).toEqual([steps[i]]);
+      expect(reduce([...before, steps[i]]).interview?.phase).toBe(phase);
     });
   });
 
-  it('sends James’s focused question to Jeremy', () => {
-    const state = reduce([
-      ...started,
-      { type: 'interview-question-sent', question: interviewQuestion },
-    ]);
-    expect(state.interview).toMatchObject({
-      status: 'awaiting-jeremy',
-      question: interviewQuestion,
-    });
-    expect(lastCrossing(state)?.crossing).toBe('to-jeremy');
+  it('never moves backwards', () => {
+    const order = ['prepare', 'scheduled', 'call', 'recap', 'debrief', 'closed'] as const;
+    const all = flow('closed');
+    const interviewEvents = all.slice(-5);
+    for (const at of order) {
+      const before = flow(at);
+      for (const event of interviewEvents) {
+        const next = reduce([...before, event]).interview!.phase;
+        expect(order.indexOf(next)).toBeGreaterThanOrEqual(order.indexOf(at));
+      }
+    }
   });
 
-  it('keeps Jeremy’s scripted interview response exact for James', () => {
-    const state = reduce([
-      ...started,
-      { type: 'interview-question-sent', question: interviewQuestion },
-      { type: 'interview-answer-submitted', text: scriptedInterviewAnswer },
-    ]);
-    expect(state.interview?.answer).toMatchObject({
-      text: scriptedInterviewAnswer,
-      edited: false,
-    });
-    expect(state.interview?.status).toBe('needs-james-reading');
-    expect(lastCrossing(state)?.crossing).toBe('to-james');
+  it('starts the call at the scheduled time, with Relay outside it', () => {
+    const state = reduce(flow('call'));
+    expect(state.trail.at(-1)).toMatchObject({ actor: 'jeremy', time: 'Thu 14:00' });
+    expect(state.trail.at(-1)?.text).toContain('Relay is not in the call');
+    expect(candidateView(state).interview?.excerpt).toBeUndefined();
+    expect(recruiterView(state).interview?.excerpt).toBeUndefined();
+    expect(candidateView(state).status.detail).toContain('Relay isn’t in the call');
   });
 
-  it('keeps an edited interview response as own words without interpreting it', () => {
-    const ownInterviewWords =
-      'I slowed the canary, paired with safety, and documented the trade-off.';
+  it('opens prep only after every Apply claim has a human decision', () => {
+    const undecided: RelayEvent[] = [note, answer(0), decideAll()[0]];
+    const state = reduce([...undecided, prepOpened(undecided)]);
+    expect(state.stage).toBe('review');
+    expect(state.interview).toBeUndefined();
+
+    const opened = reduce(flow('prepare'));
+    expect(opened.stage).toBe('interview');
+    expect(opened.interview?.openQuestion).toBe(opened.openQuestion.text);
+    expect(opened.interview?.suggestions).toHaveLength(2);
+  });
+
+  it('rejects malformed suggestions', () => {
+    const before: RelayEvent[] = [note, answer(0), ...decideAll()];
+    const [one] = scriptedAssist.suggestQuestions({
+      openQuestion: reduce(before).openQuestion.text,
+    });
+    for (const suggestions of [[one], [one, one], [one, { ...one, id: 'x', prep: ' ' }]])
+      expect(
+        reduce([...before, { type: 'interview-prep-opened', suggestions }]).interview,
+      ).toBeUndefined();
+  });
+
+  it('ignores each step out of order', () => {
+    const prepare = flow('prepare');
+    const id = reduce(prepare).interview!.suggestions[0].id;
+    const recap = flow('recap');
+    const heldEvent = recap.at(-1)!;
+    const tooEarly: [RelayEvent[], RelayEvent][] = [
+      [prepare, heldEvent],
+      [prepare, { type: 'interview-recap-confirmed' }],
+      [prepare, { type: 'interview-debriefed', outcome: 'still-open', note: 'x' }],
+      [flow('scheduled'), { type: 'interview-recap-confirmed' }],
+      [flow('scheduled'), heldEvent],
+      [prepare, { type: 'interview-call-started' }],
+      [recap, { type: 'interview-call-started' }],
+      [recap, { type: 'interview-debriefed', outcome: 'answered-for-now', note: 'x' }],
+      [recap, { type: 'interview-plan-approved', questionId: id }],
+    ];
+    for (const [before, event] of tooEarly)
+      expect(reduce([...before, event])).toEqual(reduce(before));
+  });
+
+  it('ignores a plan for a question Relay did not suggest', () => {
+    const before = flow('prepare');
     const state = reduce([
-      ...started,
-      { type: 'interview-question-sent', question: interviewQuestion },
-      { type: 'interview-answer-submitted', text: ownInterviewWords },
+      ...before,
+      { type: 'interview-plan-approved', questionId: 'made-up' },
     ]);
-    expect(state.interview?.answer).toMatchObject({
-      text: ownInterviewWords,
+    expect(state).toEqual(reduce(before));
+  });
+
+  it('allows no loops: repeating any step changes nothing', () => {
+    const all = flow('closed', { addendum: scriptedAddendum });
+    const closed = reduce(all);
+    const replayed = reduce([...all, ...all.slice(5)]);
+    expect(replayed).toEqual(closed);
+    expect(replayed.trail).toHaveLength(closed.trail.length);
+  });
+
+  it('continues the demo clock from the end of the call', () => {
+    const state = reduce(flow('debrief'));
+    const times = state.trail.slice(-3).map((e) => e.time);
+    expect(times).toEqual(['Thu 14:45', 'Thu 14:48', 'Thu 14:48']);
+  });
+});
+
+describe('interview excerpt pairing', () => {
+  const branches: [string, RelayEvent[]][] = [
+    ['operated the runtime', [note, answer(0), ...decideAll()]],
+    ['built the tooling', [note, answer(1), ...decideAll()]],
+    [
+      'own words, accepted as written',
+      [
+        note,
+        {
+          type: 'clarification-answered',
+          answerId: clarification.answers[0].id,
+          text: 'Bit of both, honestly.',
+        },
+        { type: 'custom-answer-accepted', claimId: 'latency' },
+        { type: 'claim-accepted', claimId: 'rollout' },
+        { type: 'claim-accepted', claimId: 'validation' },
+      ],
+    ],
+  ];
+
+  it.each(branches)(
+    'suggests a targeted question for the open question Apply left (%s)',
+    (_, before) => {
+      const state = reduce([...before, prepOpened(before)]);
+      const [targeted, broad] = state.interview!.suggestions;
+      expect(targeted.kind).toBe('targeted');
+      expect(broad.kind).toBe('broad');
+      expect(
+        new Set(
+          branches.map(
+            ([, b]) => reduce([...b, prepOpened(b)]).interview!.suggestions[0].id,
+          ),
+        ).size,
+      ).toBe(3);
+    },
+  );
+
+  it('ships a fixture excerpt that belongs to every question it can suggest', () => {
+    for (const [, before] of branches) {
+      for (const question of reduce([...before, prepOpened(before)]).interview!
+        .suggestions) {
+        const script = interviewScripts[question.id as QuestionId];
+        expect(excerptBelongsTo(question, script.excerpt, script.coverage)).toBe(true);
+      }
+    }
+  });
+
+  it('shows the excerpt for the chosen question, opening with James asking it verbatim', () => {
+    for (const pick of ['targeted', 'broad'] as const) {
+      const interview = reduce(flow('recap', { pick })).interview!;
+      const chosen = interview.suggestions.find((s) => s.id === interview.questionId)!;
+      expect(chosen.kind).toBe(pick);
+      expect(interview.excerpt?.questionId).toBe(chosen.id);
+      expect(interview.excerpt?.lines[0]).toMatchObject({
+        speaker: 'james',
+        text: chosen.question,
+      });
+    }
+  });
+
+  it('rejects an excerpt that belongs to the other question', () => {
+    const before = flow('call', { pick: 'targeted' });
+    const other = reduce(before).interview!.suggestions.find((s) => s.kind === 'broad')!;
+    const wrong: RelayEvent = {
+      type: 'interview-held',
+      ...scriptedAssist.extractExcerpt({ question: other })!,
+    };
+    expect(reduce([...before, wrong])).toEqual(reduce(before));
+  });
+
+  it('rejects an excerpt whose question was reworded, or whose coverage cites nothing', () => {
+    const before = flow('call');
+    const good = held(before) as Extract<RelayEvent, { type: 'interview-held' }>;
+    const reworded: RelayEvent = {
+      ...good,
+      excerpt: {
+        ...good.excerpt,
+        lines: good.excerpt.lines.map((l, i) =>
+          i === 0 ? { ...l, text: 'A different question?' } : l,
+        ),
+      },
+    };
+    const uncited: RelayEvent = {
+      ...good,
+      coverage: { ...good.coverage, addresses: [{ point: 'Something', at: '99:99' }] },
+    };
+    for (const bad of [reworded, uncited])
+      expect(reduce([...before, bad]).interview?.phase).toBe('call');
+    expect(reduce([...before, good]).interview?.phase).toBe('recap');
+  });
+});
+
+describe('interview recap addenda', () => {
+  const ownWords =
+    'I also wrote the scheduler for our simulation cluster, which shared GPUs across three teams.';
+
+  it('keeps an unchanged suggested addition as candidate-provided, unedited', () => {
+    const addendum = reduce(flow('debrief', { addendum: scriptedAddendum })).interview
+      ?.recap?.addendum;
+    expect(addendum).toMatchObject({ text: scriptedAddendum, edited: false });
+  });
+
+  it('keeps an edited addition exactly as written and does not interpret it', () => {
+    const recap = reduce(flow('recap'));
+    const state = reduce(flow('debrief', { addendum: ownWords }));
+    expect(state.interview?.recap?.addendum).toMatchObject({
+      text: ownWords,
       edited: true,
+      label: 'Your addition, in your own words',
     });
-    expect(state.trail.map((entry) => entry.text).join(' ')).toContain(
-      'without interpreting it',
+    // Relay's coverage is untouched by anything Jeremy adds.
+    expect(state.interview?.coverage).toEqual(recap.interview?.coverage);
+    expect(state.trail.at(-1)?.text).toContain('without interpreting the addition');
+    expect(recruiterView(state).interview?.recap?.addendum?.text).toBe(ownWords);
+  });
+
+  it('treats a blank addition as nothing to add', () => {
+    const state = reduce(flow('debrief', { addendum: '   ' }));
+    expect(state.interview?.phase).toBe('debrief');
+    expect(state.interview?.recap?.addendum).toBeUndefined();
+  });
+});
+
+describe('interview projections', () => {
+  const steps = ['prepare', 'scheduled', 'call', 'recap', 'debrief', 'closed'] as const;
+
+  it('never shows Jeremy James’s suggestions, coverage, notes or brief', () => {
+    for (const step of steps) {
+      for (const pick of ['targeted', 'broad'] as const) {
+        const state = reduce(
+          flow(step, { pick, corrected: true, addendum: scriptedAddendum }),
+        );
+        const view = candidateView(state);
+        const seen = JSON.stringify(view);
+        const interview = state.interview!;
+        const hidden = [
+          interview.openQuestion,
+          ...interview.suggestions.map((s: QuestionSuggestion) => s.why),
+          ...interview.suggestions
+            .filter((s) => s.id !== interview.questionId)
+            .map((s) => s.question),
+          ...(interview.coverage?.addresses.map((a) => a.point) ?? []),
+          ...(interview.coverage?.notAddressed ?? []),
+          'Closer to QA here',
+          'hiring manager’s view',
+          'still-open',
+          'strength',
+        ];
+        for (const text of hidden) expect(seen).not.toContain(text);
+        expect(view).not.toHaveProperty('interviewBrief');
+      }
+    }
+  });
+
+  it('shows Jeremy the approved topic only once the plan is sent', () => {
+    expect(candidateView(reduce(flow('prepare'))).interview?.prep).toBeUndefined();
+    const scheduled = reduce(flow('scheduled'));
+    const chosen = scheduled.interview!.suggestions[0];
+    expect(candidateView(scheduled).interview?.prep).toBe(chosen.prep);
+  });
+
+  it('quotes Jeremy’s words identically on both sides, exactly as the transcript has them', () => {
+    const state = reduce(flow('debrief', { addendum: scriptedAddendum }));
+    const chosen = state.interview!.suggestions.find(
+      (s) => s.id === state.interview!.questionId,
+    )!;
+    const transcript = interviewScripts[chosen.id as QuestionId].excerpt;
+    expect(candidateView(state).interview?.excerpt).toEqual(transcript);
+    expect(recruiterView(state).interview?.excerpt).toEqual(transcript);
+    expect(recruiterView(state).interview?.recap?.addendum?.text).toBe(scriptedAddendum);
+  });
+
+  it('lets Jeremy check the excerpt before James sees it', () => {
+    const recap = reduce(flow('recap'));
+    expect(candidateView(recap).interview?.excerpt).toEqual(recap.interview?.excerpt);
+    expect(recruiterView(recap).interview?.excerpt).toBeUndefined();
+    expect(recruiterView(recap).interview?.coverage).toBeUndefined();
+
+    const debrief = reduce(flow('debrief'));
+    expect(recruiterView(debrief).interview?.excerpt).toEqual(debrief.interview?.excerpt);
+    expect(recruiterView(debrief).interview?.coverage).toEqual(
+      debrief.interview?.coverage,
     );
   });
+});
 
-  it('lets James accept, follow up on, or leave an interview answer unresolved', () => {
-    const answered: RelayEvent[] = [
-      ...started,
-      { type: 'interview-question-sent', question: interviewQuestion },
-      { type: 'interview-answer-submitted', text: scriptedInterviewAnswer },
-    ];
-    expect(
-      reduce([...answered, { type: 'interview-answer-accepted' }]).interview?.status,
-    ).toBe('accepted');
-    expect(
-      reduce([
-        ...answered,
-        { type: 'interview-followup-sent', question: 'What did you measure next?' },
-      ]).interview,
-    ).toMatchObject({
-      status: 'awaiting-jeremy',
-      followUp: 'What did you measure next?',
-    });
-    expect(
-      reduce([...answered, { type: 'interview-answer-left-unresolved' }]).interview
-        ?.status,
-    ).toBe('unresolved');
+describe('interview debrief', () => {
+  it('requires James’s note before closing', () => {
+    const before = flow('debrief');
+    const blank = reduce([
+      ...before,
+      { type: 'interview-debriefed', outcome: 'answered-for-now', note: '  ' },
+    ]);
+    expect(blank.interview?.phase).toBe('debrief');
   });
 
-  it('resets the interview flow back to the deterministic initial state', () => {
-    const beforeReset = reduce([
-      ...started,
-      { type: 'interview-question-sent', question: interviewQuestion },
-    ]);
-    expect(beforeReset.stage).toBe('interview');
+  it('closes with James’s outcome and note, and a soft update for Jeremy', () => {
+    const state = reduce(flow('closed'));
+    expect(state.interview?.phase).toBe('closed');
+    expect(state.interview?.debrief).toMatchObject({
+      outcome: 'still-open',
+      note: 'Want the hiring manager’s view on shared GPU scheduling.',
+    });
+    expect(recruiterView(state).interview?.debrief?.outcome).toBe('still-open');
+    expect(candidateView(state).status.headline).toBe(
+      'James has finished his interview notes',
+    );
+    expect(lastCrossing(state)).toMatchObject({ actor: 'relay', crossing: 'to-jeremy' });
+    // The open question itself is never rewritten.
+    expect(state.openQuestion).toEqual(reduce(flow('prepare')).openQuestion);
+  });
+
+  it('never changes Jeremy’s words', () => {
+    const before = candidateView(reduce(flow('prepare'))).words;
+    expect(candidateView(reduce(flow('closed'))).words).toEqual(before);
+  });
+
+  it('resets to the deterministic initial state and replays identically', () => {
+    const events = flow('closed', { addendum: scriptedAddendum });
+    expect(reduce(events)).toEqual(reduce(events));
     expect(reduce([])).toEqual(initialState);
   });
 });

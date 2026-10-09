@@ -4,7 +4,6 @@ import {
   clarification,
   conciergePrompt,
   people,
-  scriptedInterviewAnswer,
   scriptedNote,
 } from '../relay/fixtures';
 import type { CandidateView, RelayState } from '../relay/reduce';
@@ -27,6 +26,8 @@ export function CandidatePortal({ state, view, myTurn, nudge = 0, onEvent }: Pro
   const phrases = state.claims.map((c) => c.evidence);
   // The note itself is shown in the Concierge card; list everything else here.
   const otherWords = view.words.filter((w) => w !== state.note);
+  // Deep green while Relay is working with Jeremy; quiet otherwise.
+  const working = view.stage === 'invite' || view.stage === 'clarify';
 
   return (
     <section className="surface jeremy" aria-label="Jeremy’s candidate portal">
@@ -52,7 +53,7 @@ export function CandidatePortal({ state, view, myTurn, nudge = 0, onEvent }: Pro
 
       <article
         key={`concierge-${nudge}`}
-        className={`concierge ${view.stage !== 'review' ? 'working' : ''} ${nudge ? 'nudge' : ''}`}
+        className={`concierge ${working ? 'working' : ''} ${nudge ? 'nudge' : ''}`}
       >
         <p className="tag relay-tag">
           <Mark size={16} /> Concierge
@@ -114,10 +115,6 @@ export function CandidatePortal({ state, view, myTurn, nudge = 0, onEvent }: Pro
           </>
         )}
       </article>
-
-      {view.stage === 'interview' && view.interview && (
-        <InterviewExperience view={view} onEvent={onEvent} />
-      )}
 
       {view.questions.map((q) => {
         const unmapped = 'unmapped' in q;
@@ -190,65 +187,6 @@ export function CandidatePortal({ state, view, myTurn, nudge = 0, onEvent }: Pro
             ))}
           </ul>
         </section>
-      )}
-    </section>
-  );
-}
-
-function InterviewExperience({
-  view,
-  onEvent,
-}: Pick<Props, 'onEvent'> & { view: CandidateView }) {
-  const interview = view.interview;
-  if (!interview) return null;
-  const question = interview.followUp ?? interview.question;
-
-  return (
-    <section className="block interview-experience" aria-label="Interview">
-      <div>
-        <p className="tag relay-tag">
-          <Mark size={16} /> Interview
-        </p>
-        <h4 className="block-title">Your interview brief</h4>
-      </div>
-      <ul className="understood">
-        {view.interviewBrief.map((item) => (
-          <li key={`${item.kind}-${item.text}`} className={item.kind}>
-            <strong>{item.kind === 'open' ? 'Open question' : item.kind}</strong>
-            <span>{item.text}</span>
-          </li>
-        ))}
-      </ul>
-      {interview.status === 'ready' && (
-        <p className="muted">James will send one focused question from this brief.</p>
-      )}
-      {interview.status === 'awaiting-jeremy' && question && (
-        <article className="human-question">
-          <p className="tag human-tag">
-            <span className="initials">{people.recruiter.initials}</span>
-            {people.recruiter.name} · written and approved by a person
-          </p>
-          <h3>{question}</h3>
-          <ChoiceComposer
-            choices={[{ id: 'interview-answer', text: scriptedInterviewAnswer }]}
-            submitLabel="Send answer to James"
-            hint="Suggested response for this demo"
-            editNote="If you change the wording, Relay will keep it as your own words and will not interpret it. James will read it exactly as written."
-            onSubmit={(_, text) => onEvent({ type: 'interview-answer-submitted', text })}
-          />
-        </article>
-      )}
-      {interview.answer && (
-        <article className="human-question">
-          <p className="meta">
-            {interview.answer.label} · {interview.answer.time}
-            {interview.answer.edited && ' · edited by you'}
-          </p>
-          <p className="voice">{interview.answer.text}</p>
-          {interview.answer.edited && (
-            <p className="edit-note">Relay has not interpreted your edited answer.</p>
-          )}
-        </article>
       )}
     </section>
   );

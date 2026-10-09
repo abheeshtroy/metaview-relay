@@ -19,17 +19,25 @@ function groupBySeq(entries: TrailEntry[]): TrailEntry[][] {
   return groups;
 }
 
-export function Trail({ entries }: { entries: TrailEntry[] }) {
+const defaultIntro =
+  'Every step between Jeremy, Relay and James, in order. Both sides are rebuilt from this log, so the demo replays the same way every time.';
+
+export function Trail({
+  entries,
+  title = 'Relay trail',
+  intro = defaultIntro,
+}: {
+  entries: TrailEntry[];
+  title?: string;
+  intro?: string;
+}) {
   const groups = groupBySeq(entries);
 
   return (
-    <section className="trail" aria-label="Relay trail">
+    <section className="trail" aria-label={title}>
       <header className="trail-head">
-        <h3 className="trail-title">Relay trail</h3>
-        <p>
-          Every step between Jeremy, Relay and James, in order. Both sides are rebuilt
-          from this log, so the demo replays the same way every time.
-        </p>
+        <h3 className="trail-title">{title}</h3>
+        <p>{intro}</p>
       </header>
 
       {groups.length === 0 ? (
