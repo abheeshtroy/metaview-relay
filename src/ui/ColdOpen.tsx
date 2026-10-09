@@ -26,7 +26,7 @@ export const introPages: IntroPage[] = [
   {
     label: 'What you’ll do',
     title: 'Try the first stage in about a minute.',
-    body: 'You’ll play both sides. Later stages are on the map but not built in this prototype.',
+    body: 'You’ll play both sides, through Apply and then the Interview. Offer and Reconnect are on the map but not built in this prototype.',
   },
 ];
 

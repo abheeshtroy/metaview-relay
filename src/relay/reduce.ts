@@ -3,15 +3,28 @@ import {
   answerEffects,
   claimTemplates,
   clarification,
+  confidenceLabel,
+  dayStart,
+  debriefOutcomeLabel,
   demoTime,
+  interviewCall,
   openQuestionAtStart,
   people,
+  scriptedAddendum,
   scriptedNote,
-  scriptedInterviewAnswer,
   type AnswerId,
   type ClaimId,
+  type ClockAnchor,
   type Confidence,
+  type DebriefOutcome,
 } from './fixtures';
+import {
+  excerptBelongsTo,
+  validSuggestions,
+  type Coverage,
+  type QuestionSuggestion,
+  type TranscriptExcerpt,
+} from './interviewAssist';
 
 export type Stage = 'invite' | 'clarify' | 'review' | 'interview';
 export type ClaimStatus =
@@ -74,14 +87,59 @@ export interface UnmappedContext {
   followUp?: Words;
 }
 
-export type InterviewStatus =
-  'ready' | 'awaiting-jeremy' | 'needs-james-reading' | 'accepted' | 'unresolved';
+export type InterviewPhase =
+  'prepare' | 'scheduled' | 'call' | 'recap' | 'debrief' | 'closed';
 
 export interface Interview {
-  status: InterviewStatus;
-  question?: string;
-  answer?: Words;
-  followUp?: string;
+  phase: InterviewPhase;
+  /** The open question as Apply left it, carried into the interview. */
+  openQuestion: string;
+  suggestions: QuestionSuggestion[];
+  questionId?: string;
+  excerpt?: TranscriptExcerpt;
+  coverage?: Coverage;
+  /** When the call ended; the demo clock continues from here. */
+  heldAt?: ClockAnchor;
+  recap?: { time: string; addendum?: Words };
+  debrief?: { outcome: DebriefOutcome; note: string; time: string };
+}
+
+type PhaseEvent = Exclude<
+  Extract<RelayEvent, { type: `interview-${string}` }>['type'],
+  'interview-prep-opened'
+>;
+
+/** The only moves the Interview stage allows: each step once, forward. */
+export const interviewTransitions: Record<
+  PhaseEvent,
+  { from: InterviewPhase; to: InterviewPhase }
+> = {
+  'interview-plan-approved': { from: 'prepare', to: 'scheduled' },
+  'interview-call-started': { from: 'scheduled', to: 'call' },
+  'interview-held': { from: 'call', to: 'recap' },
+  'interview-recap-confirmed': { from: 'recap', to: 'debrief' },
+  'interview-debriefed': { from: 'debrief', to: 'closed' },
+};
+
+/** The interview, if the event is allowed in its current phase. */
+function interviewAt(state: RelayState, type: PhaseEvent): Interview | null {
+  const interview = state.interview;
+  return state.stage === 'interview' &&
+    interview?.phase === interviewTransitions[type].from
+    ? interview
+    : null;
+}
+
+function advance(
+  interview: Interview,
+  type: PhaseEvent,
+  change: Partial<Interview>,
+): Interview {
+  return { ...interview, ...change, phase: interviewTransitions[type].to };
+}
+
+export function chosenQuestion(interview: Interview): QuestionSuggestion | undefined {
+  return interview.suggestions.find((s) => s.id === interview.questionId);
 }
 
 export interface RelayState {
@@ -144,7 +202,13 @@ function log(state: RelayState, entries: TrailEntry[], claimIds: ClaimId[] = [])
 }
 
 function apply(state: RelayState, event: RelayEvent, seq: number): RelayState | null {
-  const time = demoTime(seq);
+  const anchor =
+    event.type === 'interview-call-started'
+      ? { seq, minutes: interviewCall.startsAt }
+      : event.type === 'interview-held'
+        ? { seq, minutes: interviewCall.endsAt }
+        : (state.interview?.heldAt ?? dayStart);
+  const time = demoTime(seq, anchor);
   const entry = (actor: Actor, text: string, crossing?: Crossing): TrailEntry => ({
     seq,
     time,
@@ -560,128 +624,161 @@ function apply(state: RelayState, event: RelayEvent, seq: number): RelayState | 
       );
     }
 
-    case 'interview-started': {
-      if (state.stage !== 'review' || !readyForInterview(state)) return null;
-      return log({ ...state, stage: 'interview', interview: { status: 'ready' } }, [
-        entry('james', 'James moved Jeremy into the interview stage', 'to-jeremy'),
-        entry(
-          'relay',
-          'Relay assembled the interview brief from James’s accepted and unresolved context',
-        ),
-      ]);
-    }
-
-    case 'interview-question-sent': {
+    case 'interview-prep-opened': {
       if (
-        state.stage !== 'interview' ||
-        state.interview?.status !== 'ready' ||
-        !event.question.trim()
+        state.stage !== 'review' ||
+        !readyForInterview(state) ||
+        !validSuggestions(event.suggestions)
       )
         return null;
       return log(
         {
           ...state,
+          stage: 'interview',
           interview: {
-            ...state.interview,
-            status: 'awaiting-jeremy',
-            question: event.question,
+            phase: 'prepare',
+            openQuestion: state.openQuestion.text,
+            suggestions: event.suggestions,
           },
         },
         [
+          entry('james', 'James opened interview prep'),
           entry(
-            'james',
-            'James approved and sent one focused interview question',
+            'relay',
+            'Relay suggested two questions to James and told Jeremy his interview is being prepared',
             'to-jeremy',
           ),
         ],
       );
     }
 
-    case 'interview-answer-submitted': {
-      if (
-        state.stage !== 'interview' ||
-        state.interview?.status !== 'awaiting-jeremy' ||
-        !event.text.trim()
-      )
-        return null;
-      const edited = differsFromScript(event.text, scriptedInterviewAnswer);
-      const answer: Words = {
-        label: edited
-          ? 'Your interview answer, in your own words'
-          : 'Your interview answer',
-        text: event.text,
-        time,
-        edited,
-      };
+    case 'interview-plan-approved': {
+      const interview = interviewAt(state, event.type);
+      const chosen = interview?.suggestions.find((s) => s.id === event.questionId);
+      if (!interview || !chosen) return null;
       return log(
         {
           ...state,
-          interview: { ...state.interview, status: 'needs-james-reading', answer },
+          interview: advance(interview, event.type, { questionId: chosen.id }),
         },
         [
           entry(
-            'jeremy',
-            `Jeremy answered James’s interview question${edited ? ' in his own words' : ''}`,
-            'to-james',
-          ),
-          entry(
-            'relay',
-            edited
-              ? 'Relay sent Jeremy’s edited answer to James without interpreting it'
-              : 'Relay sent Jeremy’s answer to James exactly as written',
+            'james',
+            `James chose ${chosen.kind === 'targeted' ? 'the question aimed at the open question' : 'the broad opener'} and sent Jeremy his interview prep`,
+            'to-jeremy',
           ),
         ],
       );
     }
 
-    case 'interview-followup-sent': {
+    case 'interview-call-started': {
+      const interview = interviewAt(state, event.type);
+      if (!interview) return null;
+      return log({ ...state, interview: advance(interview, event.type, {}) }, [
+        entry(
+          'jeremy',
+          `Jeremy and James started the interview, ${interviewCall.when}. Relay is not in the call`,
+        ),
+      ]);
+    }
+
+    case 'interview-held': {
+      const interview = interviewAt(state, event.type);
+      const chosen = interview && chosenQuestion(interview);
+      // Never show an excerpt that does not belong to the question James chose.
       if (
-        state.stage !== 'interview' ||
-        state.interview?.status !== 'needs-james-reading' ||
-        !event.question.trim()
+        !interview ||
+        !chosen ||
+        !excerptBelongsTo(chosen, event.excerpt, event.coverage)
       )
         return null;
       return log(
         {
           ...state,
-          interview: {
-            ...state.interview,
-            status: 'awaiting-jeremy',
-            followUp: event.question,
-          },
+          interview: advance(interview, event.type, {
+            excerpt: event.excerpt,
+            coverage: event.coverage,
+            heldAt: anchor,
+          }),
         },
-        [entry('james', 'James approved and sent an interview follow-up', 'to-jeremy')],
+        [
+          entry(
+            'relay',
+            'After the call, Relay quoted the moment James asked his question and sent it to Jeremy to check first',
+            'to-jeremy',
+          ),
+        ],
       );
     }
 
-    case 'interview-answer-accepted': {
-      if (
-        state.stage !== 'interview' ||
-        state.interview?.status !== 'needs-james-reading'
-      )
-        return null;
-      return log({ ...state, interview: { ...state.interview, status: 'accepted' } }, [
-        entry(
-          'james',
-          'James accepted Jeremy’s interview answer as written',
-          'to-jeremy',
-        ),
-      ]);
+    case 'interview-recap-confirmed': {
+      const interview = interviewAt(state, event.type);
+      if (!interview) return null;
+      const text = event.addendum?.trim() ? event.addendum : undefined;
+      const edited = text !== undefined && differsFromScript(text, scriptedAddendum);
+      // Candidate-provided, scripted or not; Relay never interprets it.
+      const addendum: Words | undefined =
+        text === undefined
+          ? undefined
+          : {
+              label: edited ? 'Your addition, in your own words' : 'Your addition',
+              text,
+              time,
+              edited,
+            };
+      const signal = entry(
+        'relay',
+        addendum
+          ? 'Jeremy checked the interview excerpt and added context in his own words.'
+          : 'Jeremy checked the interview excerpt. Nothing to add.',
+      );
+      return log(
+        {
+          ...state,
+          interview: advance(interview, event.type, { recap: { time, addendum } }),
+          signals: [signal, ...state.signals],
+        },
+        [
+          entry(
+            'jeremy',
+            addendum
+              ? `Jeremy confirmed the excerpt and added context${edited ? ' (edited by Jeremy)' : ''}`
+              : 'Jeremy confirmed the excerpt with nothing to add',
+          ),
+          entry(
+            'relay',
+            addendum
+              ? 'Relay sent the excerpt and his addition to James, without interpreting the addition'
+              : 'Relay sent the excerpt to James',
+            'to-james',
+          ),
+        ],
+      );
     }
 
-    case 'interview-answer-left-unresolved': {
-      if (
-        state.stage !== 'interview' ||
-        state.interview?.status !== 'needs-james-reading'
-      )
+    case 'interview-debriefed': {
+      const interview = interviewAt(state, event.type);
+      if (!interview || !event.note.trim() || !(event.outcome in debriefOutcomeLabel))
         return null;
-      return log({ ...state, interview: { ...state.interview, status: 'unresolved' } }, [
-        entry(
-          'james',
-          'James left Jeremy’s interview answer unresolved for now',
-          'to-jeremy',
-        ),
-      ]);
+      return log(
+        {
+          ...state,
+          interview: advance(interview, event.type, {
+            debrief: { outcome: event.outcome, note: event.note, time },
+          }),
+        },
+        [
+          entry(
+            'james',
+            `James marked the open question “${debriefOutcomeLabel[event.outcome].toLowerCase()}” and saved the interview debrief`,
+          ),
+          entry(
+            'relay',
+            'Relay told Jeremy that James has finished his interview notes',
+            'to-jeremy',
+          ),
+        ],
+      );
     }
   }
 }
@@ -735,8 +832,18 @@ export interface CandidateView {
   questions: (
     { claimId: ClaimId; question: string } | { unmapped: true; question: string }
   )[];
-  interview?: Interview;
-  interviewBrief: BriefItem[];
+  interview?: CandidateInterviewView;
+}
+
+/** Jeremy's side of the interview. Never carries James's suggestions, coverage or notes. */
+export interface CandidateInterviewView {
+  phase: InterviewPhase;
+  call: string;
+  /** The topic James approved for Jeremy, once the plan is sent. */
+  prep?: string;
+  /** From recap on: exactly what Relay plans to share, or has shared. */
+  excerpt?: TranscriptExcerpt;
+  addendum?: Words;
 }
 
 const james = people.recruiter.first;
@@ -790,7 +897,7 @@ export function candidateView(state: RelayState): CandidateView {
       detail: 'Answer it so your note is read the way you meant it.',
     };
   } else if (state.stage === 'interview') {
-    status = interviewCandidateStatus(state.interview);
+    status = interviewCandidateStatus(state.interview?.phase);
   } else if (questions.length > 0) {
     status = {
       headline: `${james} has a question for you`,
@@ -831,8 +938,17 @@ export function candidateView(state: RelayState): CandidateView {
           })
         : [],
     questions,
-    interview: state.interview,
-    interviewBrief: recruiterView(state).brief,
+    interview: state.interview && candidateInterview(state.interview),
+  };
+}
+
+function candidateInterview(interview: Interview): CandidateInterviewView {
+  return {
+    phase: interview.phase,
+    call: `${interviewCall.when} · ${interviewCall.length} with ${people.recruiter.name}`,
+    prep: interview.phase === 'prepare' ? undefined : chosenQuestion(interview)?.prep,
+    excerpt: interview.excerpt,
+    addendum: interview.recap?.addendum,
   };
 }
 
@@ -852,7 +968,20 @@ export interface RecruiterView {
   signals: TrailEntry[];
   brief: BriefItem[];
   canStartInterview: boolean;
-  interview?: Interview;
+  interview?: RecruiterInterviewView;
+}
+
+/** James's side of the interview. */
+export interface RecruiterInterviewView {
+  phase: InterviewPhase;
+  openQuestion: string;
+  suggestions: QuestionSuggestion[];
+  chosen?: QuestionSuggestion;
+  /** Withheld until Jeremy has checked what will be shared. */
+  excerpt?: TranscriptExcerpt;
+  coverage?: Coverage;
+  recap?: Interview['recap'];
+  debrief?: Interview['debrief'];
 }
 
 export function recruiterView(state: RelayState): RecruiterView {
@@ -885,38 +1014,69 @@ export function recruiterView(state: RelayState): RecruiterView {
     signals: state.signals,
     brief,
     canStartInterview: state.stage === 'review' && readyForInterview(state),
-    interview: state.interview,
+    interview: state.interview && recruiterInterview(state.interview),
   };
 }
 
-function interviewCandidateStatus(interview?: Interview): CandidateView['status'] {
-  if (interview?.status === 'awaiting-jeremy')
-    return {
-      headline: `${james} has an interview question for you`,
-      detail:
-        'Written and approved by James. Answer in your own words whenever suits you.',
-    };
-  if (interview?.status === 'needs-james-reading')
-    return {
-      headline: `Your interview answer is with ${james}`,
-      detail: interview.answer?.edited
-        ? 'Relay has not interpreted your edited answer.'
-        : `${james} will read it exactly as you wrote it.`,
-    };
-  if (interview?.status === 'accepted')
-    return {
-      headline: `${james} accepted your interview answer`,
-      detail: 'Accepted as written by a person. Relay has not made a decision.',
-    };
-  if (interview?.status === 'unresolved')
-    return {
-      headline: 'Your interview answer remains open',
-      detail: `${james} has not drawn a conclusion yet. Nothing has been decided.`,
-    };
+function recruiterInterview(interview: Interview): RecruiterInterviewView {
+  const checked = interview.phase === 'debrief' || interview.phase === 'closed';
   return {
-    headline: 'Your interview brief is ready',
-    detail: `${james} will send one focused question when ready.`,
+    phase: interview.phase,
+    openQuestion: interview.openQuestion,
+    suggestions: interview.suggestions,
+    chosen: chosenQuestion(interview),
+    excerpt: checked ? interview.excerpt : undefined,
+    coverage: checked ? interview.coverage : undefined,
+    recap: interview.recap,
+    debrief: interview.debrief,
   };
+}
+
+/** The badge on a claim card. Once James decides, it says so instead of "inferred". */
+export function claimBadge(c: Claim): { label: string; tone: Confidence | 'decided' } {
+  if (c.status === 'corrected')
+    return { label: 'Relay’s reading replaced by James', tone: 'decided' };
+  if (c.status === 'accepted' && c.confidence === 'unclarified')
+    return { label: 'Accepted by James · not clarified by Jeremy', tone: 'decided' };
+  return { label: confidenceLabel[c.confidence], tone: c.confidence };
+}
+
+function interviewCandidateStatus(phase?: InterviewPhase): CandidateView['status'] {
+  switch (phase) {
+    case 'scheduled':
+      return {
+        headline: `Interview with ${james} · ${interviewCall.when}`,
+        detail:
+          'Here’s what he’d like to talk about. There’s nothing to write beforehand.',
+      };
+    case 'call':
+      return {
+        headline: `In your interview with ${james}`,
+        detail: 'Relay isn’t in the call. Nothing is shared until you’ve checked it.',
+      };
+    case 'recap':
+      return {
+        headline: `Check what ${james} will see`,
+        detail:
+          'Relay quoted your exact words from the interview. Confirm them, or add context in your own words.',
+      };
+    case 'debrief':
+      return {
+        headline: `Your recap is with ${james}`,
+        detail: 'He’ll read it exactly as you checked it. Relay doesn’t make decisions.',
+      };
+    case 'closed':
+      return {
+        headline: `${james} has finished his interview notes`,
+        detail:
+          'You’ll hear from a person by Friday. Nothing you said or wrote has been changed.',
+      };
+    default:
+      return {
+        headline: `${james} is preparing your interview`,
+        detail: 'Nothing for you to do yet. Relay doesn’t make decisions.',
+      };
+  }
 }
 
 /** The most recent hand-off between the two sides, used by the seam. */

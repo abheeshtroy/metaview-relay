@@ -1,4 +1,5 @@
-import type { AnswerId, ClaimId } from './fixtures';
+import type { AnswerId, ClaimId, DebriefOutcome } from './fixtures';
+import type { Coverage, QuestionSuggestion, TranscriptExcerpt } from './interviewAssist';
 
 // Events carry only what the person submitted. Whether text differs from the
 // script is derived by the reducer, never asserted by the UI.
@@ -15,11 +16,13 @@ export type RelayEvent =
   | { type: 'unmapped-context-left-unresolved' }
   | { type: 'unmapped-context-followup-sent'; question: string }
   | { type: 'unmapped-context-followup-answered'; text: string }
-  | { type: 'interview-started' }
-  | { type: 'interview-question-sent'; question: string }
-  | { type: 'interview-answer-submitted'; text: string }
-  | { type: 'interview-followup-sent'; question: string }
-  | { type: 'interview-answer-accepted' }
-  | { type: 'interview-answer-left-unresolved' };
+  // Interview: Choose → Note → Call (off screen) → Check → Debrief. Relay's outputs
+  // travel in the event that delivers them, so replay never depends on a provider.
+  | { type: 'interview-prep-opened'; suggestions: QuestionSuggestion[] }
+  | { type: 'interview-plan-approved'; questionId: string }
+  | { type: 'interview-call-started' }
+  | { type: 'interview-held'; excerpt: TranscriptExcerpt; coverage: Coverage }
+  | { type: 'interview-recap-confirmed'; addendum?: string }
+  | { type: 'interview-debriefed'; outcome: DebriefOutcome; note: string };
 
 export type Actor = 'jeremy' | 'relay' | 'james';
