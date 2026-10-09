@@ -5,9 +5,17 @@ import {
   claimTemplates,
   openQuestionAtStart,
   people,
+  interviewQuestion,
+  scriptedInterviewAnswer,
   scriptedNote,
 } from './fixtures';
-import { candidateView, lastCrossing, recruiterView, reduce } from './reduce';
+import {
+  candidateView,
+  initialState,
+  lastCrossing,
+  recruiterView,
+  reduce,
+} from './reduce';
 
 const note: RelayEvent = { type: 'context-submitted', text: scriptedNote };
 const unrelatedContext =
@@ -328,5 +336,129 @@ describe('edited clarification answers', () => {
       { type: 'claim-left-unresolved', claimId: 'latency' },
     ]);
     expect(state.claims.find((c) => c.id === 'latency')?.status).toBe('needs-review');
+  });
+});
+
+describe('interview stage', () => {
+  const ownWords =
+    'Bit of both, honestly. I owned the runtime for the first year, then handed it to the platform team and moved to release tooling.';
+  const reviewed: RelayEvent[] = [
+    note,
+    answer(0),
+    { type: 'claim-accepted', claimId: 'latency' },
+    { type: 'claim-accepted', claimId: 'rollout' },
+    { type: 'claim-accepted', claimId: 'validation' },
+  ];
+  const started: RelayEvent[] = [...reviewed, { type: 'interview-started' }];
+
+  it('enters Interview only after Apply & Context has human-reviewed every claim', () => {
+    expect(reduce([...reviewed.slice(0, -1), { type: 'interview-started' }]).stage).toBe(
+      'review',
+    );
+    const state = reduce(started);
+    expect(state.stage).toBe('interview');
+    expect(state.interview?.status).toBe('ready');
+    expect(lastCrossing(state)?.text).toContain('moved Jeremy into the interview stage');
+  });
+
+  it('generates the interview brief from accepted and unresolved context', () => {
+    const state = reduce(started);
+    expect(recruiterView(state).brief).toContainEqual({
+      kind: 'strength',
+      text: 'Inference under hard latency budgets',
+    });
+
+    const unresolved = reduce([
+      note,
+      {
+        type: 'clarification-answered',
+        answerId: clarification.answers[0].id,
+        text: ownWords,
+      },
+      { type: 'claim-left-unresolved', claimId: 'latency' },
+      { type: 'claim-accepted', claimId: 'rollout' },
+      { type: 'claim-accepted', claimId: 'validation' },
+      { type: 'interview-started' },
+    ]);
+    expect(recruiterView(unresolved).brief).toContainEqual({
+      kind: 'open',
+      text: openQuestionAtStart,
+    });
+  });
+
+  it('sends James’s focused question to Jeremy', () => {
+    const state = reduce([
+      ...started,
+      { type: 'interview-question-sent', question: interviewQuestion },
+    ]);
+    expect(state.interview).toMatchObject({
+      status: 'awaiting-jeremy',
+      question: interviewQuestion,
+    });
+    expect(lastCrossing(state)?.crossing).toBe('to-jeremy');
+  });
+
+  it('keeps Jeremy’s scripted interview response exact for James', () => {
+    const state = reduce([
+      ...started,
+      { type: 'interview-question-sent', question: interviewQuestion },
+      { type: 'interview-answer-submitted', text: scriptedInterviewAnswer },
+    ]);
+    expect(state.interview?.answer).toMatchObject({
+      text: scriptedInterviewAnswer,
+      edited: false,
+    });
+    expect(state.interview?.status).toBe('needs-james-reading');
+    expect(lastCrossing(state)?.crossing).toBe('to-james');
+  });
+
+  it('keeps an edited interview response as own words without interpreting it', () => {
+    const ownInterviewWords =
+      'I slowed the canary, paired with safety, and documented the trade-off.';
+    const state = reduce([
+      ...started,
+      { type: 'interview-question-sent', question: interviewQuestion },
+      { type: 'interview-answer-submitted', text: ownInterviewWords },
+    ]);
+    expect(state.interview?.answer).toMatchObject({
+      text: ownInterviewWords,
+      edited: true,
+    });
+    expect(state.trail.map((entry) => entry.text).join(' ')).toContain(
+      'without interpreting it',
+    );
+  });
+
+  it('lets James accept, follow up on, or leave an interview answer unresolved', () => {
+    const answered: RelayEvent[] = [
+      ...started,
+      { type: 'interview-question-sent', question: interviewQuestion },
+      { type: 'interview-answer-submitted', text: scriptedInterviewAnswer },
+    ];
+    expect(
+      reduce([...answered, { type: 'interview-answer-accepted' }]).interview?.status,
+    ).toBe('accepted');
+    expect(
+      reduce([
+        ...answered,
+        { type: 'interview-followup-sent', question: 'What did you measure next?' },
+      ]).interview,
+    ).toMatchObject({
+      status: 'awaiting-jeremy',
+      followUp: 'What did you measure next?',
+    });
+    expect(
+      reduce([...answered, { type: 'interview-answer-left-unresolved' }]).interview
+        ?.status,
+    ).toBe('unresolved');
+  });
+
+  it('resets the interview flow back to the deterministic initial state', () => {
+    const beforeReset = reduce([
+      ...started,
+      { type: 'interview-question-sent', question: interviewQuestion },
+    ]);
+    expect(beforeReset.stage).toBe('interview');
+    expect(reduce([])).toEqual(initialState);
   });
 });

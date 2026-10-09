@@ -1,11 +1,17 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { RelayEvent } from '../relay/events';
-import { clarification, scriptedNote } from '../relay/fixtures';
+import {
+  clarification,
+  interviewQuestion,
+  scriptedInterviewAnswer,
+  scriptedNote,
+} from '../relay/fixtures';
 import { candidateView, recruiterView, reduce } from '../relay/reduce';
 import { CandidatePortal } from './CandidatePortal';
 import { ColdOpen, introPages } from './ColdOpen';
 import { RecruiterWorkspace } from './RecruiterWorkspace';
+import { JourneyRail } from './JourneyRail';
 
 const ownWords =
   'Bit of both, honestly. I owned the runtime for the first year, then moved to release tooling.';
@@ -175,5 +181,83 @@ describe('cold open', () => {
     expect(html).toContain('not affiliated with or endorsed by Metaview');
     expect(html).toContain('All people, companies and data are synthetic');
     expect(html).toContain('unrelated to any real person');
+  });
+});
+
+describe('interview UI output', () => {
+  const reviewed: RelayEvent[] = [
+    { type: 'context-submitted', text: scriptedNote },
+    {
+      type: 'clarification-answered',
+      answerId: clarification.answers[0].id,
+      text: clarification.answers[0].text,
+    },
+    { type: 'claim-accepted', claimId: 'latency' },
+    { type: 'claim-accepted', claimId: 'rollout' },
+    { type: 'claim-accepted', claimId: 'validation' },
+    { type: 'interview-started' },
+  ];
+
+  it('moves the journey rail and gives Jeremy the brief plus James’s focused question', () => {
+    const state = reduce([
+      ...reviewed,
+      { type: 'interview-question-sent', question: interviewQuestion },
+    ]);
+    const candidate = renderToStaticMarkup(
+      <CandidatePortal state={state} view={candidateView(state)} myTurn onEvent={noop} />,
+    );
+    const rail = renderToStaticMarkup(<JourneyRail stage={state.stage} />);
+    expect(candidate).toContain('Your interview brief');
+    expect(candidate).toContain(interviewQuestion);
+    expect(candidate).toContain('Send answer to James');
+    expect(rail).toMatch(/Interview.*Live/);
+    expect(rail).toContain('Apply &amp; context</span><span class="journey-meta">Later');
+    expect(rail).toContain('Offer');
+    expect(rail).toContain('Reconnect');
+  });
+
+  it('shows James the exact answer and human-only outcome actions', () => {
+    const state = reduce([
+      ...reviewed,
+      { type: 'interview-question-sent', question: interviewQuestion },
+      { type: 'interview-answer-submitted', text: scriptedInterviewAnswer },
+    ]);
+    const html = renderToStaticMarkup(
+      <RecruiterWorkspace
+        state={state}
+        view={recruiterView(state)}
+        myTurn
+        onEvent={noop}
+      />,
+    );
+    expect(html).toContain(scriptedInterviewAnswer);
+    expect(html).toContain('Accept his answer');
+    expect(html).toContain('Ask a follow-up');
+    expect(html).toContain('Leave unresolved');
+  });
+
+  it('labels an edited response as own words that Relay has not interpreted', () => {
+    const edited =
+      'I worked with safety and paused the rollout before expanding the canary.';
+    const state = reduce([
+      ...reviewed,
+      { type: 'interview-question-sent', question: interviewQuestion },
+      { type: 'interview-answer-submitted', text: edited },
+    ]);
+    const html = recruiterHtml([
+      ...reviewed,
+      { type: 'interview-question-sent', question: interviewQuestion },
+      { type: 'interview-answer-submitted', text: edited },
+    ]);
+    expect(
+      candidateHtml([
+        ...reviewed,
+        { type: 'interview-question-sent', question: interviewQuestion },
+        { type: 'interview-answer-submitted', text: edited },
+      ]),
+    ).toContain('Relay has not interpreted your edited answer');
+    expect(html).toContain(edited);
+    expect(html).toContain('not interpreted by Relay');
+    expect(state.interview?.answer?.edited).toBe(true);
   });
 });

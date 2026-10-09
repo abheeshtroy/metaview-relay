@@ -25,8 +25,16 @@ function App() {
   const recruiter = recruiterView(state);
   const crossing = lastCrossing(state);
 
-  const jeremyTurn = state.stage !== 'review' || candidate.questions.length > 0;
-  const jamesTurn = !jeremyTurn && recruiter.toReview > 0;
+  const jeremyTurn =
+    state.stage === 'invite' ||
+    state.stage === 'clarify' ||
+    candidate.questions.length > 0 ||
+    state.interview?.status === 'awaiting-jeremy';
+  const jamesTurn =
+    (state.stage === 'review' && !jeremyTurn && recruiter.toReview > 0) ||
+    (state.stage === 'interview' &&
+      (state.interview?.status === 'ready' ||
+        state.interview?.status === 'needs-james-reading'));
 
   // On mobile, point at the other side when something just landed there.
   const otherSide: Side = side === 'jeremy' ? 'james' : 'jeremy';
@@ -68,7 +76,7 @@ function App() {
       </header>
 
       <main id="top" className="stage" inert={introOpen}>
-        <JourneyRail />
+        <JourneyRail stage={state.stage} />
 
         <div className="side-switch" role="tablist" aria-label="Choose a side">
           {(['jeremy', 'james'] as const).map((s) => (
