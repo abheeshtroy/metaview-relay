@@ -352,6 +352,13 @@ time {
   background: var(--ink);
   animation: blink 1.6s ease-in-out infinite;
 }
+/* A completed stage keeps its place but stops signalling activity. */
+.journey li.complete::before {
+  display: none;
+}
+.journey .complete .journey-live::before {
+  animation: none;
+}
 .journey-meta {
   font: 12px var(--mono);
   color: var(--ink-3);
@@ -1634,6 +1641,559 @@ footer {
     opacity: 0;
   }
 }
+/* ---------- Interview stage ---------- */
+
+/* One guided surface: who acts, the step, and a quiet peek at the other side. */
+.guide {
+  display: grid;
+  gap: 16px;
+  max-width: 880px;
+  margin: 0 auto;
+  scroll-margin-top: 16px;
+}
+.guide-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  padding-bottom: 12px;
+  border-bottom: 3px double var(--ink);
+}
+.guide-actor {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 800;
+  font-size: 16px;
+  letter-spacing: -0.02em;
+}
+.guide-actor.both .initials + .initials {
+  margin-left: -14px;
+  outline: 2px solid var(--canvas);
+}
+.guide-actor.done .initials {
+  background: var(--forest);
+  color: var(--lime);
+}
+.guide-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  font: 500 12px var(--mono);
+  color: var(--ink-2);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.guide-ticks {
+  display: inline-flex;
+  gap: 4px;
+}
+.guide-ticks span {
+  width: 18px;
+  height: 6px;
+  border-radius: 3px;
+  border: 1px solid var(--line-strong);
+}
+.guide-ticks .done {
+  background: var(--forest);
+  border-color: var(--forest);
+}
+.guide-ticks .now {
+  background: var(--lime);
+  border-color: var(--ink);
+}
+.peek {
+  position: relative;
+  margin-left: auto;
+  font-size: 14px;
+}
+.peek summary {
+  cursor: pointer;
+  list-style: none;
+  font-weight: 600;
+  color: var(--green-ink);
+  text-align: right;
+}
+.peek summary::-webkit-details-marker {
+  display: none;
+}
+.peek summary::after {
+  content: ' ▸';
+}
+.peek[open] summary::after {
+  content: ' ▾';
+}
+/* Floats over the step so opening it never moves the primary action. */
+.peek p {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 5;
+  width: min(340px, 80vw);
+  box-shadow: 4px 4px 0 #143f2f1a;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px dashed var(--line-strong);
+  background: var(--surface);
+  color: var(--ink-2);
+  animation: rise 0.25s var(--ease-out) both;
+}
+.peek strong {
+  color: var(--ink);
+}
+
+/* The step itself: a single surface with one headline and one action. */
+.guide-stage {
+  animation: rise 0.45s var(--ease-out) both;
+}
+.guide-screen {
+  display: grid;
+  gap: 18px;
+  padding: 30px;
+  border-radius: 20px;
+  background: var(--surface);
+  border: 1px solid var(--ink);
+  box-shadow: 6px 6px 0 #143f2f14;
+}
+.guide-screen h2 {
+  font-size: clamp(28px, 3vw, 40px);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 1.08;
+  max-width: 24ch;
+  outline: none;
+}
+.guide-why {
+  font-size: 17px;
+  color: var(--ink-2);
+  max-width: 60ch;
+  margin-top: -6px;
+}
+.guide-body {
+  display: grid;
+  gap: 16px;
+}
+.guide-relay {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--recessed);
+  font-size: 14px;
+  color: var(--ink-2);
+}
+.guide-relay strong {
+  color: var(--ink);
+}
+.guide-relay svg {
+  flex: none;
+  margin-top: 1px;
+}
+.guide-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 20px;
+  flex-wrap: wrap;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.guide-next {
+  flex: 1 1 280px;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+.guide-next-label {
+  font: 500 11px var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--green-ink);
+  margin-right: 6px;
+}
+.guide-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+/* The off-screen interview: the one deep green moment in this stage. */
+.guide-screen.transition {
+  background: var(--forest);
+  border-color: var(--forest);
+  color: var(--on-forest);
+  padding: 44px 40px;
+  box-shadow: 6px 6px 0 #143f2f26;
+}
+.guide-screen.transition h2 {
+  font-size: clamp(30px, 3.6vw, 48px);
+  max-width: 20ch;
+}
+.guide-screen.transition .eyebrow {
+  color: var(--lime);
+}
+.guide-screen.transition .guide-why,
+.guide-screen.transition .guide-next {
+  color: var(--on-forest-2);
+}
+.guide-screen.transition .guide-relay {
+  background: var(--forest-2);
+  color: var(--on-forest-2);
+}
+.guide-screen.transition .guide-relay strong {
+  color: var(--on-forest);
+}
+.guide-screen.transition .guide-next-label {
+  color: var(--lime);
+}
+.guide-screen.transition .guide-foot {
+  border-top-color: #f6f3ea26;
+}
+.guide-screen.transition .pill {
+  border-color: var(--forest-3);
+  box-shadow: 0 2px 0 var(--forest-3);
+}
+.call-line {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  font-size: 14px;
+  color: var(--on-forest-2);
+}
+.call-line li {
+  display: grid;
+  gap: 2px;
+}
+.call-line time {
+  font: 500 20px var(--mono);
+  color: var(--on-forest);
+}
+.call-line .talk {
+  position: relative;
+  text-align: center;
+  padding: 10px 0;
+  font-style: italic;
+}
+/* A dashed line between the two times: the call, which Relay isn't part of. */
+.call-line .talk::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  border-top: 2px dashed var(--lime);
+  opacity: 0.6;
+}
+.call-line li:last-child {
+  text-align: right;
+}
+.demo-note {
+  font: 12px var(--mono);
+  color: var(--on-forest-2);
+}
+
+/* Step 1: what Jeremy will see next to what stays with James. */
+.privacy-split {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 12px;
+  animation: rise 0.3s var(--ease-out) both;
+}
+.private-preview {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding: 16px 18px;
+  border-radius: 12px;
+  border: 1px dashed var(--line-strong);
+  background: var(--recessed);
+  font-size: 14px;
+  color: var(--ink-2);
+}
+.private-preview li::before {
+  content: '— ';
+  color: var(--ink-3);
+}
+
+/* Step 5: three voices, three parts, never blended. */
+.debrief-part {
+  display: grid;
+  gap: 12px;
+  padding: 16px 18px;
+  border-radius: 14px;
+}
+.debrief-part > header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+.debrief-part h3 {
+  font-size: 19px;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+}
+.debrief-part > header .meta,
+.debrief-part > header .tag {
+  margin-left: auto;
+}
+.part-n {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--ink);
+  color: var(--lime);
+  font: 500 12px var(--mono);
+}
+.debrief-part.words {
+  background: var(--recessed);
+}
+.debrief-part.conclusion {
+  border: 1px solid var(--ink);
+  box-shadow: 4px 4px 0 var(--lime);
+}
+.debrief-part .editor {
+  display: grid;
+  gap: 6px;
+}
+.debrief-part .text-button {
+  justify-self: start;
+}
+.no-decision {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* Transcript: a light inset that reads the same on cream or forest. */
+.transcript {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  color: var(--ink);
+}
+.transcript figcaption {
+  font: 12px var(--mono);
+  color: var(--ink-3);
+}
+.transcript ol {
+  display: grid;
+}
+.transcript li {
+  display: grid;
+  grid-template-columns: 44px 62px minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+  font-size: 14px;
+}
+.transcript li.james p {
+  font-weight: 600;
+}
+.transcript li .voice {
+  font-size: 16px;
+}
+.transcript-speaker {
+  font: 500 12px var(--mono);
+  color: var(--ink-2);
+}
+.transcript li.jeremy .transcript-speaker {
+  color: var(--green-ink);
+}
+
+/* Jeremy's prep note: written by Relay, approved by James. */
+.prep-note,
+.prep-preview {
+  display: grid;
+  gap: 8px;
+  padding: 16px 18px;
+  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--ink);
+  box-shadow: 4px 4px 0 var(--lime);
+}
+.prep-preview.empty {
+  border-style: dashed;
+  border-color: var(--line-strong);
+  box-shadow: none;
+}
+.prep-topic {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+}
+.recap-add {
+  display: grid;
+  gap: 10px;
+  animation: rise 0.3s var(--ease-out) both;
+}
+.evidence.addendum {
+  background: var(--amber-soft);
+  box-shadow: inset 0 0 0 1px var(--amber);
+}
+.evidence.addendum figcaption {
+  color: var(--amber-ink);
+}
+
+.plan-options,
+.outcomes {
+  display: grid;
+  gap: 10px;
+}
+.outcomes {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.plan-option {
+  text-align: left;
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  transition:
+    border-color 0.15s,
+    transform 0.15s var(--ease-out),
+    box-shadow 0.15s;
+}
+.plan-option:hover {
+  border-color: var(--ink-3);
+}
+.plan-option.selected {
+  border-color: var(--ink);
+  box-shadow: 4px 4px 0 var(--lime);
+  transform: translate(-2px, -2px);
+}
+.plan-option strong {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  line-height: 1.3;
+}
+.plan-why {
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.outcomes .choice strong {
+  font-size: 16px;
+}
+
+/* Coverage: what the excerpt speaks to, and the gaps in amber. */
+.coverage {
+  border: 1px dashed var(--green-ink);
+}
+.coverage-cols {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.coverage-head {
+  font: 500 12px var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--green-ink);
+  margin-bottom: 4px;
+}
+.coverage .gaps .coverage-head {
+  color: var(--amber-ink);
+}
+.coverage li {
+  font-size: 14px;
+  padding: 5px 0 5px 16px;
+  position: relative;
+}
+.coverage li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 12px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--lime);
+  outline: 1px solid var(--ink);
+}
+.coverage .gaps li::before {
+  background: var(--amber);
+  outline-color: var(--amber);
+}
+.coverage time {
+  margin-left: 4px;
+}
+.decision {
+  display: grid;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 3px double var(--ink);
+}
+
+/* The artifact the stage leaves behind. */
+.debrief-card {
+  display: grid;
+  gap: 14px;
+  padding: 22px;
+  border-radius: 16px;
+  background: var(--surface);
+  border: 1px solid var(--ink);
+  box-shadow: 6px 6px 0 var(--forest);
+  animation: drop-in 0.55s var(--ease-spring) both;
+}
+.debrief-card > header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-bottom: 12px;
+  border-bottom: 3px double var(--ink);
+}
+.debrief-question {
+  display: grid;
+  gap: 4px;
+}
+.debrief-question h3 {
+  font-size: 21px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.2;
+}
+.outcome {
+  font: 500 12px var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--ink);
+}
+.outcome.answered-for-now {
+  background: var(--lime);
+}
+.outcome.still-open {
+  background: var(--amber-soft);
+  border-color: var(--amber);
+  color: var(--amber-ink);
+}
+.debrief-card .human-note p:last-child {
+  margin-top: 2px;
+}
+.debrief-card footer {
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.confidence.decided {
+  background: var(--recessed);
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -1790,6 +2350,69 @@ footer {
   .trail-entries li {
     grid-template-columns: minmax(0, 1fr);
     gap: 2px;
+  }
+}
+
+@media (max-width: 900px) {
+  .transcript li {
+    grid-template-columns: 44px minmax(0, 1fr);
+  }
+  .transcript li p {
+    grid-column: 1 / -1;
+  }
+  .coverage-cols,
+  .outcomes,
+  .privacy-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .guide-screen {
+    padding: 20px 18px;
+    border-radius: 18px;
+    box-shadow: 4px 4px 0 #143f2f14;
+  }
+  .guide-screen.transition {
+    padding: 28px 20px;
+  }
+  .guide-step-label {
+    display: none;
+  }
+  .peek {
+    margin-left: 0;
+    flex-basis: 100%;
+  }
+  .peek p {
+    position: static;
+    width: auto;
+    margin-top: 8px;
+  }
+  .peek summary {
+    text-align: left;
+  }
+  .guide-actions {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .guide-actions .pill {
+    white-space: normal;
+  }
+  .call-line {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .call-line li:last-child,
+  .call-line .talk {
+    text-align: left;
+  }
+  .debrief-part {
+    padding: 14px;
+  }
+  .debrief-card {
+    padding: 18px;
+    box-shadow: 4px 4px 0 var(--forest);
+  }
+  .claim-actions .pill,
+  .composer-actions .pill {
+    white-space: normal;
   }
 }
 
