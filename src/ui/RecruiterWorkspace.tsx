@@ -1,6 +1,11 @@
 import { useState } from 'react';
 import type { RelayEvent } from '../relay/events';
-import { claimTemplates, confidenceLabel, people } from '../relay/fixtures';
+import {
+  claimTemplates,
+  confidenceLabel,
+  interviewQuestion,
+  people,
+} from '../relay/fixtures';
 import type {
   Answer,
   Claim,
@@ -129,6 +134,143 @@ export function RecruiterWorkspace({ state, view, myTurn, onEvent }: Props) {
             ))}
           </ul>
         </section>
+      )}
+
+      {view.canStartInterview && (
+        <section className="block interview-control">
+          <h4 className="block-title">Ready for interview</h4>
+          <p className="muted">
+            The accepted and unresolved context will travel with Jeremy as an interview
+            brief.
+          </p>
+          <button className="pill" onClick={() => onEvent({ type: 'interview-started' })}>
+            Start Interview stage
+          </button>
+        </section>
+      )}
+
+      {state.stage === 'interview' && view.interview && (
+        <InterviewWorkspace interview={view.interview} onEvent={onEvent} />
+      )}
+    </section>
+  );
+}
+
+function InterviewWorkspace({
+  interview,
+  onEvent,
+}: {
+  interview: NonNullable<RecruiterView['interview']>;
+  onEvent: (event: RelayEvent) => void;
+}) {
+  const [asking, setAsking] = useState(false);
+  const [draft, setDraft] = useState(interviewQuestion);
+  const needsReading = interview.status === 'needs-james-reading';
+  return (
+    <section className="block interview-control" aria-label="Interview workspace">
+      <h4 className="block-title">Focused interview question</h4>
+      {interview.status === 'ready' && !asking && (
+        <>
+          <p className="muted">One question, written and approved by you.</p>
+          <button className="pill" onClick={() => setAsking(true)}>
+            Send a question
+          </button>
+        </>
+      )}
+      {interview.status === 'ready' && asking && (
+        <div className="editor">
+          <textarea
+            value={draft}
+            rows={3}
+            onChange={(event) => setDraft(event.target.value)}
+            aria-label="Focused interview question"
+          />
+          <div className="claim-actions">
+            <button className="ghost" onClick={() => setAsking(false)}>
+              Cancel
+            </button>
+            <button
+              className="pill"
+              disabled={!draft.trim()}
+              onClick={() =>
+                onEvent({ type: 'interview-question-sent', question: draft })
+              }
+            >
+              Approve &amp; send to Jeremy
+            </button>
+          </div>
+        </div>
+      )}
+      {interview.question && (
+        <p className="sent-question">
+          <span className="meta">James asked</span>{' '}
+          {interview.followUp ?? interview.question}
+        </p>
+      )}
+      {interview.answer && (
+        <figure className={`evidence answer ${interview.answer.edited ? 'custom' : ''}`}>
+          <figcaption>
+            {interview.answer.edited
+              ? 'Jeremy’s edited answer, in his own words · not interpreted by Relay'
+              : 'Jeremy’s answer'}{' '}
+            · {interview.answer.time}
+          </figcaption>
+          <blockquote className="voice">{interview.answer.text}</blockquote>
+        </figure>
+      )}
+      {needsReading && !asking && (
+        <div className="claim-actions">
+          <button
+            className="pill"
+            onClick={() => onEvent({ type: 'interview-answer-accepted' })}
+          >
+            Accept his answer
+          </button>
+          <button className="ghost" onClick={() => setAsking(true)}>
+            Ask a follow-up
+          </button>
+          <button
+            className="ghost"
+            onClick={() => onEvent({ type: 'interview-answer-left-unresolved' })}
+          >
+            Leave unresolved
+          </button>
+        </div>
+      )}
+      {needsReading && asking && (
+        <div className="editor">
+          <textarea
+            value={draft}
+            rows={3}
+            onChange={(event) => setDraft(event.target.value)}
+            aria-label="Interview follow-up"
+          />
+          <div className="claim-actions">
+            <button className="ghost" onClick={() => setAsking(false)}>
+              Cancel
+            </button>
+            <button
+              className="pill"
+              disabled={!draft.trim()}
+              onClick={() =>
+                onEvent({ type: 'interview-followup-sent', question: draft })
+              }
+            >
+              Approve &amp; send to Jeremy
+            </button>
+          </div>
+        </div>
+      )}
+      {interview.status === 'awaiting-jeremy' && (
+        <p className="muted">Waiting for Jeremy’s response.</p>
+      )}
+      {interview.status === 'accepted' && (
+        <p className="muted">James accepted Jeremy’s answer as written.</p>
+      )}
+      {interview.status === 'unresolved' && (
+        <p className="muted">
+          James left this answer unresolved. Nothing has been decided.
+        </p>
       )}
     </section>
   );

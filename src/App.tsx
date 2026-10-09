@@ -4,6 +4,7 @@ import { people } from './relay/fixtures';
 import { candidateView, lastCrossing, recruiterView, reduce } from './relay/reduce';
 import { CandidatePortal } from './ui/CandidatePortal';
 import { ColdOpen } from './ui/ColdOpen';
+import { InterviewGuide } from './ui/InterviewGuide';
 import { JourneyRail } from './ui/JourneyRail';
 import { Mark } from './ui/Mark';
 import { RecruiterWorkspace } from './ui/RecruiterWorkspace';
@@ -25,8 +26,16 @@ function App() {
   const recruiter = recruiterView(state);
   const crossing = lastCrossing(state);
 
-  const jeremyTurn = state.stage !== 'review' || candidate.questions.length > 0;
-  const jamesTurn = !jeremyTurn && recruiter.toReview > 0;
+  // The Interview stage is a guided walkthrough on one surface, not the Duet.
+  const guided = state.stage === 'interview';
+  const jeremyTurn =
+    state.stage === 'invite' ||
+    state.stage === 'clarify' ||
+    candidate.questions.length > 0;
+  const jamesTurn =
+    state.stage === 'review' &&
+    !jeremyTurn &&
+    (recruiter.toReview > 0 || recruiter.canStartInterview);
 
   // On mobile, point at the other side when something just landed there.
   const otherSide: Side = side === 'jeremy' ? 'james' : 'jeremy';
@@ -35,6 +44,11 @@ function App() {
   const otherTurn = otherSide === 'james' ? jamesTurn : jeremyTurn;
 
   const dispatch = (event: RelayEvent) => setEvents((prev) => [...prev, event]);
+  const reset = () => {
+    setEvents([]);
+    setSide('jeremy');
+    window.scrollTo({ top: 0 });
+  };
   const closeIntro = useCallback((start: boolean) => {
     setIntroOpen(false);
     if (start) {
@@ -57,67 +71,75 @@ function App() {
           <button className="ghost" onClick={() => setIntroOpen(true)}>
             What is this?
           </button>
-          <button
-            className="ghost"
-            onClick={() => setEvents([])}
-            disabled={!events.length}
-          >
+          <button className="ghost" onClick={reset} disabled={!events.length}>
             Reset demo
           </button>
         </div>
       </header>
 
       <main id="top" className="stage" inert={introOpen}>
-        <JourneyRail />
+        <JourneyRail stage={state.stage} interviewPhase={state.interview?.phase} />
 
-        <div className="side-switch" role="tablist" aria-label="Choose a side">
-          {(['jeremy', 'james'] as const).map((s) => (
-            <button
-              key={s}
-              role="tab"
-              aria-selected={side === s}
-              className={side === s ? 'active' : ''}
-              onClick={() => setSide(s)}
-            >
-              {s === 'jeremy'
-                ? `${people.candidate.first} · candidate`
-                : `${people.recruiter.first} · recruiter`}
-              {(s === 'jeremy' ? jeremyTurn : jamesTurn) && (
-                <span className="dot" aria-label="needs action" />
-              )}
-            </button>
-          ))}
-        </div>
+        {guided ? (
+          <InterviewGuide
+            state={state}
+            candidate={candidate}
+            recruiter={recruiter}
+            onEvent={dispatch}
+            onReplay={reset}
+          />
+        ) : (
+          <>
+            <div className="side-switch" role="tablist" aria-label="Choose a side">
+              {(['jeremy', 'james'] as const).map((s) => (
+                <button
+                  key={s}
+                  role="tab"
+                  aria-selected={side === s}
+                  className={side === s ? 'active' : ''}
+                  onClick={() => setSide(s)}
+                >
+                  {s === 'jeremy'
+                    ? `${people.candidate.first} · candidate`
+                    : `${people.recruiter.first} · recruiter`}
+                  {(s === 'jeremy' ? jeremyTurn : jamesTurn) && (
+                    <span className="dot" aria-label="needs action" />
+                  )}
+                </button>
+              ))}
+            </div>
 
-        {landedOnOther && otherTurn && (
-          <button className="meanwhile" onClick={() => setSide(otherSide)}>
-            <span className="dot" aria-hidden="true" />
-            Meanwhile, on {otherSide === 'james' ? 'James' : 'Jeremy'}’s side:{' '}
-            {crossing.text}
-            <span aria-hidden="true"> →</span>
-          </button>
+            {landedOnOther && otherTurn && (
+              <button className="meanwhile" onClick={() => setSide(otherSide)}>
+                <span className="dot" aria-hidden="true" />
+                Meanwhile, on {otherSide === 'james' ? 'James' : 'Jeremy'}’s side:{' '}
+                {crossing.text}
+                <span aria-hidden="true"> →</span>
+              </button>
+            )}
+
+            <Handoff crossing={crossing} />
+
+            <div className="duet" data-side={side}>
+              <CandidatePortal
+                state={state}
+                view={candidate}
+                myTurn={jeremyTurn}
+                nudge={nudge}
+                onEvent={dispatch}
+              />
+              <Seam crossing={crossing} />
+              <RecruiterWorkspace
+                state={state}
+                view={recruiter}
+                myTurn={jamesTurn}
+                onEvent={dispatch}
+              />
+            </div>
+
+            <Trail entries={state.trail} />
+          </>
         )}
-
-        <Handoff crossing={crossing} />
-
-        <div className="duet" data-side={side}>
-          <CandidatePortal
-            state={state}
-            view={candidate}
-            myTurn={jeremyTurn}
-            nudge={nudge}
-            onEvent={dispatch}
-          />
-          <Seam crossing={crossing} />
-          <RecruiterWorkspace
-            state={state}
-            view={recruiter}
-            myTurn={jamesTurn}
-            onEvent={dispatch}
-          />
-        </div>
-
-        <Trail entries={state.trail} />
 
         <footer>
           Relay is an independent concept prototype and is not affiliated with or endorsed

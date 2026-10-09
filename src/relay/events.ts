@@ -14,6 +14,12 @@ export type RelayEvent =
   | { type: 'unmapped-context-accepted' }
   | { type: 'unmapped-context-left-unresolved' }
   | { type: 'unmapped-context-followup-sent'; question: string }
-  | { type: 'unmapped-context-followup-answered'; text: string };
+  | { type: 'unmapped-context-followup-answered'; text: string }
+  | { type: 'interview-started' }
+  | { type: 'interview-question-sent'; question: string }
+  | { type: 'interview-answer-submitted'; text: string }
+  | { type: 'interview-followup-sent'; question: string }
+  | { type: 'interview-answer-accepted' }
+  | { type: 'interview-answer-left-unresolved' };
 
 export type Actor = 'jeremy' | 'relay' | 'james';

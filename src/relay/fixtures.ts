@@ -28,6 +28,12 @@ export const conciergePrompt =
 export const scriptedNote =
   'My résumé reads as automotive, but most of the last six years was ML systems work. I worked on the on-vehicle inference stack for our perception models, where every frame had a hard 30 ms latency budget. I built the over-the-air pipeline that shipped model updates to the fleet in staged canaries, and the hardware-in-the-loop rig we used to validate each model before release. That feels close to serving, rollout and evaluation infrastructure.';
 
+export const interviewQuestion =
+  'Tell me about a time you had to make a model rollout safe while keeping a tight latency budget.';
+
+export const scriptedInterviewAnswer =
+  'During a staged rollout, older vehicles missed the latency budget. I paused the next canary, moved pre-processing onto the accelerator, and used a smaller fallback model while we measured the safety impact before continuing.';
+
 export interface ClaimTemplate {
   id: ClaimId;
   evidence: string;
