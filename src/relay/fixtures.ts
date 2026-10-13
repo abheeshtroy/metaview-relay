@@ -1,33 +1,23 @@
-// Synthetic demo script. Every person, company and sentence here is fictional.
+// Synthetic demo script. Every person, company, number and sentence here is fictional.
 
-import type {
-  Coverage,
-  QuestionSuggestion,
-  TranscriptExcerpt,
-  TranscriptLine,
-} from './interviewAssist';
-
-export type ClaimId = 'latency' | 'rollout' | 'validation';
-export type AnswerId = 'owned-runtime' | 'built-tooling';
-export type Confidence =
-  | 'unclarified'
-  | 'clarified'
-  | 'narrowed'
-  // Jeremy edited the scripted answer, so Relay does not interpret it.
-  | 'uninterpreted'
-  // James read Jeremy's own answer and accepted it as written.
-  | 'accepted-as-written';
+import type { Coverage, TranscriptExcerpt, TranscriptLine } from './interviewAssist';
 
 export const people = {
   candidate: { name: 'Jeremy Clarkson', first: 'Jeremy', initials: 'JC' },
   recruiter: { name: 'James May', first: 'James', initials: 'JM' },
   employer: 'AutoFarm',
   role: 'Staff Software Engineer, AI Infrastructure',
-  location: 'Seattle, WA · open to hybrid',
 };
 
+// ---------- Apply ----------
+
+/** What James sees of the application before Jeremy adds anything. */
+export const resumeSummary =
+  'Résumé: six years of software at a vehicle maker, on perception, fleet updates and test rigs. It never mentions model serving.';
+
+/** What Relay could not tell from the application alone. */
 export const openQuestionAtStart =
-  'How recently has Jeremy operated model-serving or evaluation infrastructure? His application does not say.';
+  'How recently has Jeremy run model-serving or evaluation infrastructure? His application does not say.';
 
 export const conciergePrompt =
   'Is there anything relevant to this role that your résumé doesn’t make obvious?';
@@ -35,14 +25,14 @@ export const conciergePrompt =
 export const scriptedNote =
   'My résumé reads as automotive, but most of the last six years was ML systems work. I worked on the on-vehicle inference stack for our perception models, where every frame had a hard 30 ms latency budget. I built the over-the-air pipeline that shipped model updates to the fleet in staged canaries, and the hardware-in-the-loop rig we used to validate each model before release. That feels close to serving, rollout and evaluation infrastructure.';
 
+export type ClaimId = 'latency' | 'rollout' | 'validation';
+
 export interface ClaimTemplate {
   id: ClaimId;
+  /** The exact phrase in Jeremy's note that the reading rests on. */
   evidence: string;
   skill: string;
   roleNeed: string;
-  correctionNote: string;
-  draftQuestion: string;
-  scriptedFollowUp: string;
 }
 
 export const claimTemplates: ClaimTemplate[] = [
@@ -50,184 +40,166 @@ export const claimTemplates: ClaimTemplate[] = [
     id: 'latency',
     evidence: 'hard 30 ms latency budget',
     skill: 'Inference under hard latency budgets',
-    roleNeed: 'Latency and reliability targets for model serving',
-    correctionNote:
-      'Strong latency instincts, but embedded inference isn’t the same as multi-tenant GPU serving. Worth exploring in the screen.',
-    draftQuestion:
-      'Could you share a time you traded latency against reliability in the inference stack? What did you change?',
-    scriptedFollowUp:
-      'We were missing the 30 ms budget on older hardware. I moved pre-processing onto the accelerator and added a fallback model, and accepted a small accuracy drop on those vehicles.',
+    roleNeed: 'Latency targets for model serving',
   },
   {
     id: 'rollout',
     evidence: 'staged canaries',
     skill: 'Staged model rollout to a fleet',
     roleNeed: 'Safe rollout of new model versions',
-    correctionNote:
-      'Reads as release engineering more than model serving. Still valuable; I’d like to discuss scope with the hiring manager.',
-    draftQuestion: 'When a canary went wrong, how did you detect it and roll back?',
-    scriptedFollowUp:
-      'Each canary group reported on-vehicle health metrics. If false-positive braking events rose above baseline, the rollout paused and the previous model was restored automatically.',
   },
   {
     id: 'validation',
     evidence: 'hardware-in-the-loop rig',
     skill: 'Pre-release model validation',
     roleNeed: 'Evaluation infrastructure',
-    correctionNote:
-      'HIL validation is closer to QA than to eval infrastructure here. I want to hear how he would apply it.',
-    draftQuestion: 'How did you decide a model was ready to ship from the rig results?',
-    scriptedFollowUp:
-      'We replayed a fixed library of recorded drives and required no regressions on safety-critical scenarios. Anything borderline went to a human review board.',
   },
 ];
 
+export type AnswerId = 'owned-runtime' | 'built-tooling';
+
+/** The one thing in Jeremy's note that James could read two ways. */
 export const clarification = {
-  // The claim this question is about; a custom answer leaves it to James.
   target: 'latency' as ClaimId,
   question:
-    'One question so James reads this correctly: on the on-vehicle inference stack, did you operate the runtime in production, or build tooling around a runtime another team owned?',
+    'On the on-vehicle inference stack, did you run the runtime in production, or build tooling around a runtime another team owned?',
   answers: [
     {
       id: 'owned-runtime' as const,
+      label: 'I ran it',
       text: 'I owned the runtime in production for two years, including on-call, across roughly 40,000 vehicles.',
     },
     {
       id: 'built-tooling' as const,
+      label: 'I built the tooling',
       text: 'I built the release and validation tooling. The ML platform team owned the runtime itself.',
     },
   ],
 };
 
+/** How Relay reads each claim. `unread`: Jeremy wrote his own answer, so James reads it. */
+export type ReadingBasis = 'note' | 'answer' | 'narrowed' | 'unread';
+
 export interface AnswerEffect {
-  confidence: Record<ClaimId, Confidence>;
+  basis: Record<ClaimId, ReadingBasis>;
   skillOverride?: Partial<Record<ClaimId, string>>;
   openQuestion: string;
-  signal: string;
+  /** Why the open question is still open, for James. */
+  openBecause: string;
+  plan: QuestionId;
 }
 
 export const answerEffects: Record<AnswerId, AnswerEffect> = {
   'owned-runtime': {
-    confidence: {
-      latency: 'clarified',
-      rollout: 'unclarified',
-      validation: 'unclarified',
-    },
+    basis: { latency: 'answer', rollout: 'note', validation: 'note' },
     openQuestion:
-      'How does on-vehicle serving at fleet scale translate to multi-tenant GPU serving at AutoFarm?',
-    signal: 'Jeremy says he operated the inference runtime in production.',
+      'Does his on-vehicle serving work carry over to many teams’ models sharing data-centre GPUs?',
+    openBecause:
+      'He ran a runtime with a few models per vehicle. Nothing he has said covers many tenants on shared hardware.',
+    plan: 'shared-gpu-translation',
   },
   'built-tooling': {
-    confidence: { latency: 'narrowed', rollout: 'clarified', validation: 'clarified' },
+    basis: { latency: 'narrowed', rollout: 'answer', validation: 'answer' },
     skillOverride: { latency: 'Tooling around latency-bounded inference' },
     openQuestion:
-      'Has Jeremy operated a model-serving runtime directly, or only the tooling around one?',
-    signal: 'Jeremy says he built the tooling; another team operated the runtime.',
+      'Has Jeremy run a model-serving runtime himself, or only the tooling around one?',
+    openBecause:
+      'His answer says another team owned the runtime. The role needs someone who has operated one.',
+    plan: 'runtime-split',
   },
 };
 
-export const confidenceLabel: Record<Confidence, string> = {
-  unclarified: 'Inferred · not yet clarified',
-  clarified: 'Clarified by Jeremy',
-  narrowed: 'Narrowed by Jeremy’s answer',
-  uninterpreted: 'Own-words answer · not interpreted by Relay',
-  'accepted-as-written': 'Jeremy’s own answer · accepted by James',
+/** When Jeremy answers in his own words, Relay quotes them and leaves the reading to James. */
+export const ownWordsEffect = {
+  openQuestion:
+    'Has Jeremy run a model-serving runtime himself? He answered in his own words.',
+  openBecause: 'Relay doesn’t interpret an answer written in his own words. Read it.',
 };
 
-// Deterministic demo clock: Thursday 8 October, starting 10:02, three minutes per
-// step. After the interview, the clock restarts from when the call ended.
-export interface ClockAnchor {
-  seq: number;
-  minutes: number;
-}
-export const dayStart: ClockAnchor = { seq: 0, minutes: 10 * 60 + 2 };
-
-export function demoTime(seq: number, anchor: ClockAnchor = dayStart): string {
-  const total = anchor.minutes + (seq - anchor.seq) * 3;
-  const hh = Math.floor(total / 60);
-  const mm = String(total % 60).padStart(2, '0');
-  return `Thu ${hh}:${mm}`;
-}
+/** When Relay finds nothing in the note to link, the reading is James's from the start. */
+export const unlinkedNote =
+  'Relay couldn’t link anything in his note to this role, so it didn’t ask him anything. Read it yourself.';
 
 // ---------- Interview ----------
-// The interview itself happens off screen. These are the synthetic outputs a
-// bounded assistant would produce around it; see interviewAssist.ts.
 
 export const interviewCall = {
-  when: 'Thu 8 Oct · 14:00',
-  length: '45 min',
-  /** Minutes since midnight when the call starts and ends, for the demo clock. */
-  startsAt: 14 * 60,
-  endsAt: 14 * 60 + 45,
+  length: '45 minutes',
+  minutes: 45,
+  decisionBy: 'Monday 12 October',
 };
 
-export type QuestionId =
-  'shared-gpu-translation' | 'runtime-split' | 'recent-hands-on' | 'broad-overview';
+export type SlotId = 'tue' | 'wed' | 'thu';
 
-const broadOverview: QuestionSuggestion = {
-  id: 'broad-overview',
-  kind: 'broad',
-  question: 'Walk me through the ML systems you’ve worked on most recently.',
-  why: 'Open-ended and good for rapport, but the answer may never reach your open question.',
-  prep: 'James would like an overview of the ML systems you’ve worked on most recently.',
-};
+/** Open times on James's calendar. Relay offers them; Jeremy picks. */
+export const interviewSlots: {
+  id: SlotId;
+  day: string;
+  /** Minutes since midnight. */
+  startsAt: number;
+}[] = [
+  { id: 'tue', day: 'Tue 6 Oct', startsAt: 15 * 60 },
+  { id: 'wed', day: 'Wed 7 Oct', startsAt: 10 * 60 + 30 },
+  { id: 'thu', day: 'Thu 8 Oct', startsAt: 14 * 60 },
+];
 
-/** One targeted suggestion for each open question the Apply stage can leave. */
-const targetedByOpenQuestion: Record<string, QuestionSuggestion> = {
-  [answerEffects['owned-runtime'].openQuestion]: {
+export const clock = (m: number) =>
+  `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`;
+export const slotLabel = (slot: (typeof interviewSlots)[number]) =>
+  `${slot.day}, ${clock(slot.startsAt)}`;
+
+export type QuestionId = 'shared-gpu-translation' | 'runtime-split';
+
+export interface InterviewPlan {
+  id: QuestionId;
+  /** What James asks, word for word. Only the hiring team sees it. */
+  question: string;
+  /** Why Relay suggests it, for James. */
+  why: string;
+  /** The topic Jeremy is told in advance. Candidate-safe. */
+  prep: string;
+}
+
+export const interviewPlans: Record<QuestionId, InterviewPlan> = {
+  'shared-gpu-translation': {
     id: 'shared-gpu-translation',
-    kind: 'targeted',
     question:
       'Your runtime served a few models per vehicle. What would change if many teams’ models shared the same GPUs?',
     why: 'Goes straight at whether his on-vehicle serving work carries over to shared GPUs.',
     prep: 'James would like to hear how your on-vehicle serving work might carry over to serving many models on shared GPUs.',
   },
-  [answerEffects['built-tooling'].openQuestion]: {
+  'runtime-split': {
     id: 'runtime-split',
-    kind: 'targeted',
     question:
       'When the runtime misbehaved in production, what did you handle yourself, and what went to the platform team?',
     why: 'Separates what Jeremy operated himself from what he built around it.',
     prep: 'James would like to hear how production responsibilities were split between you and the ML platform team.',
   },
-  [openQuestionAtStart]: {
-    id: 'recent-hands-on',
-    kind: 'targeted',
-    question:
-      'When were you last hands-on with model-serving or evaluation infrastructure, and what did that involve day to day?',
-    why: 'Asks for the recency and day-to-day detail the application leaves out.',
-    prep: 'James would like to hear when you last worked hands-on with model-serving or evaluation systems, and what that looked like day to day.',
-  },
 };
 
-/** Targeted first, then the broad opener. Unknown open questions get the application's. */
-export function questionSuggestionsFor(openQuestion: string): QuestionSuggestion[] {
-  return [
-    targetedByOpenQuestion[openQuestion] ?? targetedByOpenQuestion[openQuestionAtStart],
-    broadOverview,
-  ];
+export interface FollowUp {
+  /** Relay's question to Jeremy after the call, about a topic there wasn't time for. */
+  question: string;
+  /** A suggested reply for the demo. Whatever Jeremy sends is quoted, never interpreted. */
+  scriptedReply: string;
 }
 
 const excerpt = (
-  question: QuestionSuggestion,
+  plan: InterviewPlan,
   lines: Omit<TranscriptLine, 'speaker'>[],
 ): TranscriptExcerpt => ({
-  questionId: question.id,
+  questionId: plan.id,
   source: 'synthetic-fixture',
   lines: lines.map((l, i) => ({ ...l, speaker: i === 0 ? 'james' : 'jeremy' })),
 });
 
-const targeted = (id: QuestionId) =>
-  Object.values(targetedByOpenQuestion).find((q) => q.id === id) as QuestionSuggestion;
-
-/** The transcript moment for each question, and what it does and doesn't cover. */
+/** The transcript moment for each plan, what it covers, and the follow-up it leaves. */
 export const interviewScripts: Record<
   QuestionId,
-  { excerpt: TranscriptExcerpt; coverage: Coverage }
+  { excerpt: TranscriptExcerpt; coverage: Coverage; followUp: FollowUp }
 > = {
   'shared-gpu-translation': {
-    excerpt: excerpt(targeted('shared-gpu-translation'), [
-      { at: '18:04', text: targeted('shared-gpu-translation').question },
+    excerpt: excerpt(interviewPlans['shared-gpu-translation'], [
+      { at: '18:04', text: interviewPlans['shared-gpu-translation'].question },
       {
         at: '18:20',
         text: 'The latency discipline carries over. We profiled every model against a fixed budget and refused releases that blew it. What I haven’t done is schedule lots of tenants on one card.',
@@ -248,10 +220,16 @@ export const interviewScripts: Record<
         'Any experience with data-centre serving frameworks',
       ],
     },
+    followUp: {
+      question:
+        'There wasn’t time to get into quotas, noisy neighbours or cost when many models share hardware. Have you worked on anything like that?',
+      scriptedReply:
+        'I sized the accelerator for the next vehicle generation, working out how many models it could host within budget and what each one could use at peak. That’s the closest I’ve come to capacity planning for shared hardware.',
+    },
   },
   'runtime-split': {
-    excerpt: excerpt(targeted('runtime-split'), [
-      { at: '15:10', text: targeted('runtime-split').question },
+    excerpt: excerpt(interviewPlans['runtime-split'], [
+      { at: '15:10', text: interviewPlans['runtime-split'].question },
       {
         at: '15:24',
         text: 'The platform team carried the pager for the runtime. When a release regressed, my tooling caught it in the canary and rolled the fleet back. I wrote that rollback path and I owned it.',
@@ -271,70 +249,64 @@ export const interviewScripts: Record<
         'How he would ramp up on runtime ownership at AutoFarm',
       ],
     },
-  },
-  'recent-hands-on': {
-    excerpt: excerpt(targeted('recent-hands-on'), [
-      { at: '11:32', text: targeted('recent-hands-on').question },
-      {
-        at: '11:45',
-        text: 'Evaluation, this year. I ran the hardware-in-the-loop rig and decided which recorded drives went into the regression set.',
-      },
-      {
-        at: '12:20',
-        text: 'Serving, last spring, during the fleet rollout of the new detection model. Since then I’ve been closer to validation than to the runtime.',
-      },
-    ]),
-    coverage: {
-      addresses: [
-        { point: 'Hands-on evaluation work this year', at: '11:45' },
-        { point: 'Last serving work was last spring', at: '12:20' },
-      ],
-      notAddressed: [
-        'How much of the serving work he did himself',
-        'The scale of the serving systems involved',
-      ],
-    },
-  },
-  'broad-overview': {
-    excerpt: excerpt(broadOverview, [
-      { at: '06:41', text: broadOverview.question },
-      {
-        at: '06:52',
-        text: 'Most recently, the perception models on our vehicles: the on-vehicle inference stack, the over-the-air pipeline that shipped updates in canary groups, and the rig we validated every model on.',
-      },
-      {
-        at: '07:31',
-        text: 'The part I enjoyed most was the rig. Replaying thousands of recorded drives against a new model and seeing exactly where it got worse.',
-      },
-    ]),
-    coverage: {
-      addresses: [
-        { point: 'What he worked on: inference, rollout and validation', at: '06:52' },
-        { point: 'Most energised by evaluation work', at: '07:31' },
-      ],
-      notAddressed: [
-        'The open question: nothing here speaks to it directly',
-        'His own role versus his team’s in running these systems',
-      ],
+    followUp: {
+      question:
+        'There wasn’t time to cover on-call. Have you carried a pager for a serving system yourself?',
+      scriptedReply:
+        'Not as primary. I was secondary on-call for the release pipeline, and joined the runtime team’s rotation for two major launches.',
     },
   },
 };
 
-/** Jeremy's suggested addition at recap. Edited or not, Relay never interprets it. */
-export const scriptedAddendum =
-  'One thing I didn’t get to say: I sized the accelerator for the next vehicle generation, working out how many models it could host within budget. That’s the closest I’ve come to capacity planning for shared hardware.';
+export type DebriefOutcome = 'advance' | 'hold';
 
-export type DebriefOutcome = 'answered-for-now' | 'still-open';
+// ---------- Offer / Close ----------
 
-export const debriefOutcomeLabel: Record<DebriefOutcome, string> = {
-  'answered-for-now': 'Answered for now',
-  'still-open': 'Still open',
+/** AutoFarm's approved offer. Relay may answer only from these, and only on routine topics. */
+export type OfferFactId =
+  | 'role'
+  | 'base'
+  | 'equity'
+  | 'startWindow'
+  | 'workModel'
+  | 'firstYear'
+  | 'onboarding'
+  | 'replyBy';
+
+export const offerFacts: Record<OfferFactId, { label: string; value: string }> = {
+  role: { label: 'Role', value: people.role },
+  base: { label: 'Base salary', value: '$245,000 a year' },
+  equity: { label: 'Equity', value: '$400,000 in RSUs, vesting over four years' },
+  startWindow: {
+    label: 'Start date',
+    value: 'Any Monday from 2 November to 30 November 2026',
+  },
+  workModel: {
+    label: 'Work model',
+    value: 'Hybrid: Tuesday to Thursday in the Seattle office',
+  },
+  firstYear: {
+    label: 'First year',
+    value:
+      'Lead GPU scheduling for the shared inference platform and mentor two engineers',
+  },
+  onboarding: {
+    label: 'Onboarding',
+    value: 'A six-week ramp, paired with the inference platform lead',
+  },
+  replyBy: { label: 'Reply by', value: 'Friday 23 October 2026' },
 };
 
-/** Starter notes for the demo. James's to rewrite; they never come from Relay. */
-export const debriefNoteStarters: Record<DebriefOutcome, string> = {
-  'answered-for-now':
-    'Answered enough to move forward. Carry the gaps Relay listed into the next round rather than treating them as settled.',
-  'still-open':
-    'Not answered yet. I want the hiring manager’s view before we decide on next steps.',
-};
+export const offerDay = 'Fri 9 Oct';
+
+export type OfferPresetId = 'start-date' | 'first-year' | 'base-salary';
+
+/** Suggested questions in Jeremy's portal. They run through the same triage as his own words. */
+export const offerPresets: { id: OfferPresetId; question: string }[] = [
+  { id: 'start-date', question: 'How flexible is the start date?' },
+  { id: 'first-year', question: 'What would I own in the first year?' },
+  { id: 'base-salary', question: 'Is there any room on the base salary?' },
+];
+
+/** James's held slot, offered when he would rather talk than write. */
+export const callSlot = 'Thursday 15 October at 11:00';

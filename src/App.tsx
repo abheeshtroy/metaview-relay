@@ -1,47 +1,52 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { RelayEvent } from './relay/events';
 import { people } from './relay/fixtures';
-import { candidateView, lastCrossing, recruiterView, reduce } from './relay/reduce';
-import { CandidatePortal } from './ui/CandidatePortal';
+import { scriptedOfferAssist, type OfferAssist } from './relay/offerAssist';
+import { reduce, turnOf, type Side } from './relay/reduce';
 import { ColdOpen } from './ui/ColdOpen';
-import { InterviewGuide } from './ui/InterviewGuide';
+import { JamesSide } from './ui/JamesSide';
+import { JeremySide } from './ui/JeremySide';
 import { JourneyRail } from './ui/JourneyRail';
 import { Mark } from './ui/Mark';
-import { RecruiterWorkspace } from './ui/RecruiterWorkspace';
-import { Handoff, Seam } from './ui/Seam';
-import { Trail } from './ui/Trail';
+import { Pane } from './ui/Pane';
+import { Record } from './ui/Record';
 import './styles.css';
 
-type Side = 'jeremy' | 'james';
+async function liveOfferAssist(question: string): Promise<OfferAssist> {
+  const response = await fetch('/api/offer-assist', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ question }),
+  });
+  if (!response.ok) throw new Error('Offer assist unavailable');
+  return response.json() as Promise<OfferAssist>;
+}
 
 function App() {
   const [events, setEvents] = useState<RelayEvent[]>([]);
   const [introOpen, setIntroOpen] = useState(true);
+  const [asking, setAsking] = useState(false);
   const [side, setSide] = useState<Side>('jeremy');
-  // Bumped when the viewer starts from the intro, so the Concierge draws the eye once.
-  const [nudge, setNudge] = useState(0);
 
   const state = useMemo(() => reduce(events), [events]);
-  const candidate = candidateView(state);
-  const recruiter = recruiterView(state);
-  const crossing = lastCrossing(state);
+  const turn = turnOf(state);
 
-  // The Interview stage is a guided walkthrough on one surface, not the Duet.
-  const guided = state.stage === 'interview';
-  const jeremyTurn =
-    state.stage === 'invite' ||
-    state.stage === 'clarify' ||
-    candidate.questions.length > 0;
-  const jamesTurn =
-    state.stage === 'review' &&
-    !jeremyTurn &&
-    (recruiter.toReview > 0 || recruiter.canStartInterview);
-
-  // On mobile, point at the other side when something just landed there.
-  const otherSide: Side = side === 'jeremy' ? 'james' : 'jeremy';
-  const landedOnOther =
-    crossing && (crossing.crossing === 'to-james' ? 'james' : 'jeremy') === otherSide;
-  const otherTurn = otherSide === 'james' ? jamesTurn : jeremyTurn;
+  // On narrow screens one side shows at a time, and the view follows the move.
+  const [followed, setFollowed] = useState(turn);
+  if (turn !== followed) {
+    setFollowed(turn);
+    if (turn) setSide(turn);
+  }
+  // When the move passes, bring the new mover's task into view if it isn't.
+  useEffect(() => {
+    if (!turn) return;
+    const target =
+      document.querySelector(`#pane-${turn} [data-task]`) ??
+      document.getElementById(`pane-${turn}`);
+    const box = target?.getBoundingClientRect();
+    if (box && (box.top < 64 || box.top > window.innerHeight - 120))
+      target?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+  }, [turn]);
 
   const dispatch = (event: RelayEvent) => setEvents((prev) => [...prev, event]);
   const reset = () => {
@@ -49,13 +54,32 @@ function App() {
     setSide('jeremy');
     window.scrollTo({ top: 0 });
   };
-  const closeIntro = useCallback((start: boolean) => {
-    setIntroOpen(false);
-    if (start) {
-      setSide('jeremy');
-      setNudge((n) => n + 1);
+  const undo = () => setEvents((prev) => prev.slice(0, -1));
+  const closeIntro = useCallback(() => setIntroOpen(false), []);
+
+  // Suggested questions use deterministic triage. Jeremy's own words go to the live
+  // model when a key is configured; the reducer re-checks whatever comes back.
+  const ask = async (question: string, suggested: boolean) => {
+    if (suggested) {
+      dispatch({
+        type: 'offer-question-asked',
+        question,
+        assist: scriptedOfferAssist(question),
+      });
+      return;
     }
-  }, []);
+    setAsking(true);
+    let assist: OfferAssist;
+    try {
+      assist = await liveOfferAssist(question);
+    } catch {
+      assist = scriptedOfferAssist(question, 'provider-error');
+    }
+    setAsking(false);
+    dispatch({ type: 'offer-question-asked', question, assist });
+  };
+
+  const { candidate: jeremy, recruiter: james } = people;
 
   return (
     <div className="app">
@@ -72,79 +96,66 @@ function App() {
             What is this?
           </button>
           <button className="ghost" onClick={reset} disabled={!events.length}>
-            Reset demo
+            Start over
           </button>
         </div>
       </header>
 
       <main id="top" className="stage" inert={introOpen}>
-        <JourneyRail stage={state.stage} interviewPhase={state.interview?.phase} />
+        <JourneyRail step={state.step} />
 
-        {guided ? (
-          <InterviewGuide
-            state={state}
-            candidate={candidate}
-            recruiter={recruiter}
-            onEvent={dispatch}
-            onReplay={reset}
-          />
+        {state.step === 'done' ? (
+          <Record state={state} onReplay={reset} />
         ) : (
           <>
-            <div className="side-switch" role="tablist" aria-label="Choose a side">
+            <div className="side-tabs" role="tablist" aria-label="Whose side to show">
               {(['jeremy', 'james'] as const).map((s) => (
                 <button
                   key={s}
                   role="tab"
                   aria-selected={side === s}
-                  className={side === s ? 'active' : ''}
+                  aria-controls={`pane-${s}`}
                   onClick={() => setSide(s)}
                 >
                   {s === 'jeremy'
-                    ? `${people.candidate.first} · candidate`
-                    : `${people.recruiter.first} · recruiter`}
-                  {(s === 'jeremy' ? jeremyTurn : jamesTurn) && (
-                    <span className="dot" aria-label="needs action" />
-                  )}
+                    ? `${jeremy.first} · candidate`
+                    : `${james.first} · recruiter`}
+                  {turn === s && <span className="dot" aria-label="has the move" />}
                 </button>
               ))}
             </div>
-
-            {landedOnOther && otherTurn && (
-              <button className="meanwhile" onClick={() => setSide(otherSide)}>
-                <span className="dot" aria-hidden="true" />
-                Meanwhile, on {otherSide === 'james' ? 'James' : 'Jeremy'}’s side:{' '}
-                {crossing.text}
-                <span aria-hidden="true"> →</span>
-              </button>
-            )}
-
-            <Handoff crossing={crossing} />
-
-            <div className="duet" data-side={side}>
-              <CandidatePortal
+            <div id="duet" className="duet">
+              <Pane
+                side="jeremy"
                 state={state}
-                view={candidate}
-                myTurn={jeremyTurn}
-                nudge={nudge}
-                onEvent={dispatch}
-              />
-              <Seam crossing={crossing} />
-              <RecruiterWorkspace
+                active={turn === 'jeremy'}
+                shown={side === 'jeremy'}
+              >
+                <JeremySide
+                  state={state}
+                  onEvent={dispatch}
+                  onAsk={ask}
+                  asking={asking}
+                />
+              </Pane>
+              <Pane
+                side="james"
                 state={state}
-                view={recruiter}
-                myTurn={jamesTurn}
-                onEvent={dispatch}
-              />
+                active={turn === 'james'}
+                shown={side === 'james'}
+              >
+                <JamesSide state={state} onEvent={dispatch} onUndo={undo} />
+              </Pane>
             </div>
-
-            <Trail entries={state.trail} />
+            {state.step === 'held' && (
+              <div className="actions center">
+                <button className="pill" onClick={reset}>
+                  Replay from the start
+                </button>
+              </div>
+            )}
           </>
         )}
-
-        <footer>
-          Relay is an independent concept prototype and is not affiliated with or endorsed
-          by Metaview. Every person, company and sentence in it is synthetic.
-        </footer>
       </main>
 
       {introOpen && <ColdOpen onClose={closeIntro} />}

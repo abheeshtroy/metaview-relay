@@ -1,25 +1,13 @@
-import { interviewScripts, questionSuggestionsFor, type QuestionId } from './fixtures';
+import { interviewScripts, type FollowUp, type InterviewPlan } from './fixtures';
 
-// The Interview stage's AI boundary. Relay may suggest questions, extract the
-// transcript moment that belongs to the chosen question, and note what that
-// moment does and does not cover. It never concludes; James does.
+// The Interview stage's AI boundary. In the call, Relay marks the moment James
+// asks his planned question and quotes it exactly. When the call ends, it notes
+// what the answer covers and leaves open, and writes one follow-up for Jeremy on
+// what was missed. It never decides.
 //
-// The demo uses `scriptedAssist`, which is deterministic. A live provider would
-// run outside the reducer, record its output in the event it dispatches, and fall
-// back to `scriptedAssist` when it fails or its output does not pass the checks
-// below. The reducer re-checks every output, so a bad suggestion or a mismatched
-// excerpt is ignored rather than shown.
-
-export interface QuestionSuggestion {
-  id: string;
-  /** Aimed at the open question, or a broad opener. */
-  kind: 'targeted' | 'broad';
-  question: string;
-  /** Why Relay suggests it, for James only. */
-  why: string;
-  /** What Jeremy is told about the topic. Candidate-safe: no internal notes. */
-  prep: string;
-}
+// The demo uses `scriptedAssist`, which replays recorded output. A live notetaker
+// would run outside the reducer and record its output in the event it dispatches.
+// The reducer re-checks every output, so a mismatched excerpt or note is ignored.
 
 export interface TranscriptLine {
   /** Minutes and seconds into the call. */
@@ -40,51 +28,47 @@ export interface Coverage {
   notAddressed: string[];
 }
 
-export interface InterviewAssist {
-  suggestQuestions(input: { openQuestion: string }): QuestionSuggestion[];
-  extractExcerpt(input: {
-    question: QuestionSuggestion;
-  }): { excerpt: TranscriptExcerpt; coverage: Coverage } | undefined;
+export interface CallNotes {
+  coverage: Coverage;
+  followUp: FollowUp;
 }
 
-export const scriptedAssist: InterviewAssist = {
-  suggestQuestions: ({ openQuestion }) => questionSuggestionsFor(openQuestion),
-  extractExcerpt: ({ question }) => interviewScripts[question.id as QuestionId],
+export const scriptedAssist = {
+  excerptFor: (plan: InterviewPlan): TranscriptExcerpt =>
+    interviewScripts[plan.id].excerpt,
+  notesFor: (plan: InterviewPlan): CallNotes => {
+    const { coverage, followUp } = interviewScripts[plan.id];
+    return { coverage, followUp };
+  },
 };
 
 const filled = (s: string) => s.trim().length > 0;
 
-/** Exactly two distinct, complete suggestions. */
-export function validSuggestions(suggestions: QuestionSuggestion[]): boolean {
+/**
+ * An excerpt belongs to a plan only if it is tagged with it and opens with James
+ * asking the question word for word, followed by Jeremy's answer.
+ */
+export function excerptBelongsTo(plan: InterviewPlan, excerpt: TranscriptExcerpt) {
+  const [first, ...rest] = excerpt.lines;
   return (
-    suggestions.length === 2 &&
-    new Set(suggestions.map((s) => s.id)).size === 2 &&
-    suggestions.every((s) => [s.id, s.question, s.why, s.prep].every(filled))
+    excerpt.questionId === plan.id &&
+    first?.speaker === 'james' &&
+    first.text === plan.question &&
+    rest.some((l) => l.speaker === 'jeremy') &&
+    excerpt.lines.every((l) => filled(l.text))
   );
 }
 
-/**
- * An excerpt belongs to a question only if it is tagged with that question and
- * opens with James asking it word for word. Every coverage point must cite a
- * line Jeremy actually said in the excerpt.
- */
-export function excerptBelongsTo(
-  question: QuestionSuggestion,
-  excerpt: TranscriptExcerpt,
-  coverage: Coverage,
-): boolean {
-  const [first, ...rest] = excerpt.lines;
+/** Every coverage point must cite a line Jeremy actually said, and there must be a follow-up. */
+export function notesFit(excerpt: TranscriptExcerpt, notes: CallNotes): boolean {
+  const { coverage, followUp } = notes;
   const jeremyLines = new Set(
     excerpt.lines.filter((l) => l.speaker === 'jeremy').map((l) => l.at),
   );
   return (
-    excerpt.questionId === question.id &&
-    first?.speaker === 'james' &&
-    first.text === question.question &&
-    rest.length > 0 &&
-    excerpt.lines.every((l) => filled(l.text)) &&
+    coverage.addresses.length > 0 &&
     coverage.addresses.every((a) => filled(a.point) && jeremyLines.has(a.at)) &&
     coverage.notAddressed.every(filled) &&
-    coverage.addresses.length + coverage.notAddressed.length > 0
+    filled(followUp.question)
   );
 }

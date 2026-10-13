@@ -15,31 +15,31 @@ export interface IntroPage {
 export const introPages: IntroPage[] = [
   {
     label: 'What Relay is',
-    title: 'Most hiring software is about the candidate. Relay works with them.',
-    body: 'A concept for a candidate relationship layer: the candidate’s side of an agentic recruiting platform, from application to the next role.',
+    title: 'Recruiting runs on conversations. Relay keeps them connected.',
+    body: 'A concept for the candidate side of an agentic recruiting platform. Relay does the routine work between conversations, so the recruiter and the candidate spend their time on what needs a person.',
   },
   {
-    label: 'How context is shared',
-    title: `${candidate.first} brings the context. ${recruiter.first} brings the judgment.`,
-    body: `${candidate.first} explains what his résumé misses. Relay carries his words to ${recruiter.first}, asks only what is still unclear, and keeps the decision with a person.`,
+    label: 'Who does what',
+    title: 'Relay does the routine work. People make the calls.',
+    body: `Relay reads, asks, takes notes, drafts and answers from approved facts. ${recruiter.first} decides what the interview is for, whether to make an offer, and anything about pay. ${candidate.first}’s words are always quoted exactly as he wrote them.`,
   },
   {
     label: 'What you’ll do',
-    title: 'Try the first stage in about a minute.',
-    body: 'You’ll play both sides, through Apply and then the Interview. Offer and Reconnect are on the map but not built in this prototype.',
+    title: 'Play both sides, from application to offer.',
+    body: `About three minutes. ${candidate.first}’s portal and ${recruiter.first}’s workspace sit side by side. Act on the side marked “Your move” and watch the other one change.`,
   },
 ];
 
 const roles = [
-  { who: candidate.first, kind: 'jeremy', does: 'Adds context in his own words' },
-  { who: 'Relay', kind: 'relay', does: 'Connects, asks and carries it forward' },
-  { who: recruiter.first, kind: 'james', does: 'Decides what counts' },
+  { who: candidate.first, kind: 'jeremy', does: 'Answers in his own words' },
+  { who: 'Relay', kind: 'relay', does: 'Handles the routine work' },
+  { who: recruiter.first, kind: 'james', does: 'Makes the decisions' },
 ];
 
 const tasks = [
-  `Share ${candidate.first}’s note about his automotive work.`,
-  'Answer Relay’s one question, or edit it into your own words.',
-  `Switch to ${recruiter.first} and accept, correct or ask.`,
+  `Apply: ${candidate.first} says what his résumé misses. Relay clears up one point with him and writes ${recruiter.first}’s brief.`,
+  `Interview: ${candidate.first} books a time. Relay quotes the answer that matters and follows up on what the call missed.`,
+  `Offer: Relay answers routine questions from the offer. Pay comes to ${recruiter.first}, with a draft.`,
 ];
 
 function PageExtra({ page }: { page: number }): ReactNode {

@@ -1,46 +1,56 @@
-import type { InterviewPhase, Stage } from '../relay/reduce';
+import { stageOf, type Stage, type Step } from '../relay/reduce';
 
-type Step = 'apply' | 'interview';
-
-const stages: { name: string; product: string; step?: Step }[] = [
-  { name: 'Apply & context', product: 'Concierge · Potential', step: 'apply' },
-  { name: 'Interview', product: 'Concierge', step: 'interview' },
-  { name: 'Offer', product: 'Close' },
-  { name: 'Reconnect', product: 'Reconnect' },
+const stages: { id: Stage | 'reconnect'; name: string }[] = [
+  { id: 'apply', name: 'Apply' },
+  { id: 'interview', name: 'Interview' },
+  { id: 'offer', name: 'Offer' },
+  { id: 'reconnect', name: 'Reconnect' },
 ];
+const order: (Stage | 'reconnect')[] = stages.map((s) => s.id);
 
-export function JourneyRail({
-  stage = 'invite',
-  interviewPhase,
-}: {
-  stage?: Stage;
-  interviewPhase?: InterviewPhase;
-}) {
-  const active: Step = stage === 'interview' ? 'interview' : 'apply';
-  // Once James saves the debrief, Interview stays the current stage but is no longer live.
-  const complete = active === 'interview' && interviewPhase === 'closed';
+/** Where the story is. Without a step (in the intro), it previews the journey. */
+export function JourneyRail({ step }: { step?: Step }) {
+  const current = step ? stageOf[step] : undefined;
   return (
     <ol className="journey" aria-label="Candidate journey">
       {stages.map((s) => {
-        const live = s.step === active;
-        const meta = live
-          ? s.product
-          : s.step === 'apply'
-            ? `Done · ${s.product}`
-            : s.step
-              ? `Next · ${s.product}`
-              : 'Later · not built yet';
+        const state =
+          s.id === 'reconnect'
+            ? 'later'
+            : !current
+              ? 'later'
+              : s.id === current
+                ? step === 'held'
+                  ? 'held'
+                  : step === 'done'
+                    ? 'done'
+                    : 'live'
+                : order.indexOf(s.id) < order.indexOf(current)
+                  ? 'done'
+                  : 'later';
+        const meta =
+          s.id === 'reconnect'
+            ? 'Not built yet'
+            : state === 'live'
+              ? 'Now'
+              : state === 'held'
+                ? 'Held for another round'
+                : state === 'done'
+                  ? 'Done'
+                  : step === 'held'
+                    ? 'Not yet'
+                    : current
+                      ? 'Next'
+                      : 'In this demo';
         return (
           <li
-            key={s.name}
-            className={live ? `live${complete ? ' complete' : ''}` : 'later'}
+            key={s.id}
+            className={state}
+            aria-current={state === 'live' ? 'step' : undefined}
           >
-            <span className="journey-dot" aria-hidden="true" />
             <span className="journey-name">
               {s.name}
-              {live && (
-                <span className="journey-live">{complete ? 'Complete' : 'Live'}</span>
-              )}
+              {state === 'live' && <span className="journey-live">Live</span>}
             </span>
             <span className="journey-meta">{meta}</span>
           </li>
