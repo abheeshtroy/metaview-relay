@@ -1,28 +1,29 @@
-import type { AnswerId, ClaimId, DebriefOutcome } from './fixtures';
-import type { Coverage, QuestionSuggestion, TranscriptExcerpt } from './interviewAssist';
+import type { AnswerId, DebriefOutcome, QuestionId, SlotId } from './fixtures';
+import type { CallNotes, TranscriptExcerpt } from './interviewAssist';
+import type { OfferAssist, ReplyMode } from './offerAssist';
 
-// Events carry only what the person submitted. Whether text differs from the
-// script is derived by the reducer, never asserted by the UI.
+// Events carry only what a person did, or what Relay produced. AI output travels
+// in the event that delivers it, so replay never depends on a provider. Whether
+// text differs from a suggestion is derived by the reducer, never asserted here.
 export type RelayEvent =
-  | { type: 'context-submitted'; text: string }
+  // Apply
+  | { type: 'note-shared'; text: string }
   | { type: 'clarification-answered'; answerId: AnswerId; text: string }
-  | { type: 'claim-accepted'; claimId: ClaimId }
-  | { type: 'claim-corrected'; claimId: ClaimId; note: string }
-  | { type: 'clarification-sent'; claimId: ClaimId; question: string }
-  | { type: 'followup-answered'; claimId: ClaimId; text: string }
-  | { type: 'custom-answer-accepted'; claimId: ClaimId }
-  | { type: 'claim-left-unresolved'; claimId: ClaimId }
-  | { type: 'unmapped-context-accepted' }
-  | { type: 'unmapped-context-left-unresolved' }
-  | { type: 'unmapped-context-followup-sent'; question: string }
-  | { type: 'unmapped-context-followup-answered'; text: string }
-  // Interview: Choose → Note → Call (off screen) → Check → Debrief. Relay's outputs
-  // travel in the event that delivers them, so replay never depends on a provider.
-  | { type: 'interview-prep-opened'; suggestions: QuestionSuggestion[] }
-  | { type: 'interview-plan-approved'; questionId: string }
-  | { type: 'interview-call-started' }
-  | { type: 'interview-held'; excerpt: TranscriptExcerpt; coverage: Coverage }
-  | { type: 'interview-recap-confirmed'; addendum?: string }
-  | { type: 'interview-debriefed'; outcome: DebriefOutcome; note: string };
+  | { type: 'interview-invited'; questionId: QuestionId }
+  // Interview
+  | { type: 'interview-booked'; slotId: SlotId }
+  | { type: 'call-question-asked'; excerpt: TranscriptExcerpt }
+  | ({ type: 'call-ended' } & CallNotes)
+  | { type: 'follow-up-answered'; text?: string }
+  | { type: 'debrief-decided'; outcome: DebriefOutcome; note?: string }
+  // Offer / Close
+  | { type: 'offer-question-asked'; question: string; assist: OfferAssist }
+  | { type: 'offer-sent-to-james'; questionId: string }
+  | { type: 'offer-reply-sent'; questionId: string; mode: ReplyMode; text: string }
+  | { type: 'offer-reply-acknowledged'; questionId: string; outcome: AckOutcome }
+  | { type: 'offer-finished' };
+
+/** What Jeremy says about James's reply. A call is booked, never "resolved". */
+export type AckOutcome = 'answered' | 'wants-call' | 'call-accepted';
 
 export type Actor = 'jeremy' | 'relay' | 'james';
