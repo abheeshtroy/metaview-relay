@@ -25,11 +25,12 @@ export class OpenAIResponsesProvider implements OfferAssistProvider {
   constructor(
     private readonly apiKey: string,
     private readonly model = process.env.OPENAI_MODEL || 'gpt-4.1-mini',
+    private readonly timeoutMs = 8_000,
   ) {}
 
   async assist(question: string): Promise<OfferAssist> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8_000);
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
       const upstream = await fetch('https://api.openai.com/v1/responses', {
         method: 'POST',
@@ -90,9 +91,12 @@ export async function handleOfferAssist(
   const key = process.env.OPENAI_API_KEY;
   if (!provider && !key) return responseJson(scriptedOfferAssist(question, 'fallback'));
   try {
-    return responseJson(
-      await (provider ?? new OpenAIResponsesProvider(key!)).assist(question),
-    );
+    const result = await (provider ?? new OpenAIResponsesProvider(key!)).assist(question);
+    // Providers are never trusted with candidate-visible text or provenance.
+    // Recreate both from the checked contract at the HTTP boundary.
+    const checked = checkOfferAssist(question, result);
+    if (!checked) throw new Error('provider result failed checks');
+    return responseJson({ ...checked, mode: 'live', status: 'success' });
   } catch {
     return responseJson(scriptedOfferAssist(question, 'provider-error'));
   }

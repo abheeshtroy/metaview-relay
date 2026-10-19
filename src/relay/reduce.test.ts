@@ -203,6 +203,20 @@ describe('Offer / Close', () => {
     expect(turnOf(state)).toBe('james');
   });
 
+  it('keeps James’s edited response separate from Relay’s interpretation', () => {
+    const edited = 'I can’t confirm sponsorship in writing. Let’s discuss it together.';
+    const state = reduce([
+      ...toOffer,
+      asked('Can we discuss base salary and H-1B sponsorship?'),
+      { type: 'offer-reply-sent', questionId: 'q1', mode: 'written', text: edited },
+    ]);
+    const question = state.offer!.questions[0];
+    expect(question.text).toBe('Can we discuss base salary and H-1B sponsorship?');
+    expect(question.assist.concerns).toEqual(['compensation', 'immigration']);
+    expect(question.reply).toMatchObject({ text: edited, editedByJames: true });
+    expect(questionStatus(question)).toBe('James replied · waiting for Jeremy');
+  });
+
   it('re-triages unsafe model output instead of trusting it', () => {
     const question = 'Is the base salary negotiable?';
     const unsafe: OfferAssist = {

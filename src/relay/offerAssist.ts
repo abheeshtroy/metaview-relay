@@ -168,10 +168,37 @@ export function scriptedOfferAssist(
 
 const capitalise = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
-/** Digits an answer may contain: only those in the facts it cites. */
-function numbersAllowed(answer: string, facts: OfferFactId[]): boolean {
-  const allowed = new Set(facts.flatMap((f) => offerFacts[f].value.match(/\d+/g) ?? []));
-  return (answer.match(/\d+/g) ?? []).every((n) => allowed.has(n));
+function answerReason(factsUsed: OfferFactId[]) {
+  return `Answered from the approved offer: ${factsUsed.map((fact) => offerFacts[fact].label.toLowerCase()).join(', ')}.`;
+}
+
+function jamesReason(concerns: ConcernType[]) {
+  const forJames = concerns.filter(
+    (concern) => !routineConcerns.includes(concern) && concern !== 'other',
+  );
+  return forJames.length
+    ? `${capitalise(joinLabels(forJames))} questions always go to James.`
+    : 'The approved offer doesn’t answer this, so James should.';
+}
+
+/** The one approved answer Relay may give for a complete set of routine topics. */
+function routineAnswerFor(concerns: ConcernType[]) {
+  if (!concerns.length || !concerns.every((concern) => routineConcerns.includes(concern)))
+    return null;
+  const parts = concerns.map((concern) => routineAnswers[concern]);
+  if (parts.some((part) => !part)) return null;
+  const answers = parts as { facts: OfferFactId[]; answer: string }[];
+  return {
+    answer: answers.map((part) => part.answer).join(' '),
+    factsUsed: [...new Set(answers.flatMap((part) => part.facts))],
+  };
+}
+
+function sameIds<T extends string>(actual: T[], expected: T[]) {
+  return (
+    actual.length === expected.length &&
+    actual.every((id, index) => id === expected[index])
+  );
 }
 
 /**
@@ -193,35 +220,40 @@ export function checkOfferAssist(
     !Array.isArray(facts) ||
     !facts.every((f) => factIds.includes(f as OfferFactId)) ||
     (data.route !== 'answer' && data.route !== 'james') ||
+    typeof data.answer !== 'string' ||
     typeof data.reason !== 'string' ||
     !data.reason.trim()
   )
     return null;
-  // Sensitive topics are never dropped, even when a model misses them.
+  // Keep Relay's deterministic reading as well as the model's interpretation.
+  // In particular, a combined pay + start-date question must not lose the
+  // start-date part just because pay requires James.
   const merged = [
-    ...new Set([
-      ...(concerns as ConcernType[]),
-      ...detectConcerns(question).filter(
-        (c) => !routineConcerns.includes(c) && c !== 'other',
-      ),
-    ]),
+    ...new Set([...detectConcerns(question), ...(concerns as ConcernType[])]),
   ];
-  if (data.route === 'james')
+  if (data.route === 'james') {
+    // A routed question carries interpretation only. It never carries a hidden
+    // proposed answer or facts that could be mistaken for James's approval.
+    if ((typeof data.answer === 'string' && data.answer.trim()) || facts.length)
+      return null;
     return {
       concerns: merged,
       route: 'james',
       factsUsed: [],
-      reason: data.reason.trim(),
+      reason: jamesReason(merged),
     };
+  }
   const answer = typeof data.answer === 'string' ? data.answer.trim() : '';
   const used = facts as OfferFactId[];
+  const approved = routineAnswerFor(merged);
   if (
     !answer ||
     used.length === 0 ||
     sensitiveQuestion.test(question) ||
-    !merged.every((c) => routineConcerns.includes(c)) ||
+    !approved ||
     sensitiveAnswer.test(answer) ||
-    !numbersAllowed(answer, used)
+    answer !== approved.answer ||
+    !sameIds(used, approved.factsUsed)
   )
     return null;
   return {
@@ -229,7 +261,7 @@ export function checkOfferAssist(
     route: 'answer',
     answer,
     factsUsed: used,
-    reason: data.reason.trim(),
+    reason: answerReason(used),
   };
 }
 

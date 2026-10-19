@@ -444,10 +444,10 @@ function Offer({ state, onEvent, onAsk, asking }: Props) {
 
 const sourceNote = (q: OfferQuestion) =>
   q.assist.mode === 'live'
-    ? 'checked live'
+    ? 'live model triage · checked against approved offer facts'
     : q.assist.status === 'provider-error'
-      ? 'live check unavailable, offline triage'
-      : 'offline triage';
+      ? 'live check unavailable · offline replay'
+      : 'offline replay';
 
 function QuestionThread({ q, onEvent }: { q: OfferQuestion; onEvent: Props['onEvent'] }) {
   const ack = (outcome: 'answered' | 'wants-call' | 'call-accepted') =>

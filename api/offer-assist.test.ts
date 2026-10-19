@@ -10,7 +10,8 @@ const question = 'When can I start?';
 const live: OfferAssist = {
   concerns: ['start-date'],
   route: 'answer',
-  answer: 'Any Monday from 2 November to 30 November 2026 works.',
+  answer:
+    'Any Monday from 2 November to 30 November 2026 works. Tell James which one suits you.',
   factsUsed: ['startWindow'],
   reason: 'From the start date in the offer.',
   mode: 'live',
@@ -61,6 +62,22 @@ describe('offer assist server boundary', () => {
     });
   });
 
+  it.each([
+    ['timeout', new Error('timeout')],
+    ['quota failure', new Error('provider status 429')],
+  ])('uses deterministic offline triage after a %s', async (_name, error) => {
+    const provider: OfferAssistProvider = {
+      assist: vi.fn(async () => Promise.reject(error)),
+    };
+    const response = await handleOfferAssist(request(), provider);
+    expect(await response.json()).toMatchObject({
+      mode: 'replay',
+      status: 'provider-error',
+      route: 'answer',
+      answer: live.answer,
+    });
+  });
+
   it('parses Responses output and labels it live', async () => {
     const { mode: _m, status: _s, ...output } = live;
     modelReturns(output);
@@ -80,6 +97,37 @@ describe('offer assist server boundary', () => {
     expect(await response.json()).toMatchObject({
       mode: 'replay',
       status: 'provider-error',
+    });
+  });
+
+  it.each([
+    ['malformed output', 'not JSON'],
+    ['empty output', undefined],
+  ])('falls back after %s from Responses', async (_name, output) => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ output_text: output }))),
+    );
+    const response = await handleOfferAssist(
+      request(),
+      new OpenAIResponsesProvider('test-key'),
+    );
+    expect(await response.json()).toMatchObject({
+      mode: 'replay',
+      status: 'provider-error',
+      answer: live.answer,
+    });
+  });
+
+  it('does not trust an injected provider result that bypasses the model validator', async () => {
+    const provider: OfferAssistProvider = {
+      assist: vi.fn(async () => ({ ...live, answer: 'Start whenever you like.' })),
+    };
+    const response = await handleOfferAssist(request(), provider);
+    expect(await response.json()).toMatchObject({
+      mode: 'replay',
+      status: 'provider-error',
+      answer: live.answer,
     });
   });
 

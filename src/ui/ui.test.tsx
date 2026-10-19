@@ -161,7 +161,7 @@ describe('Offer / Close', () => {
         },
       ]),
     );
-    expect(html).toContain('checked live');
+    expect(html).toContain('live model triage · checked against approved offer facts');
     expect(html).toContain('from your offer: work model');
   });
 
