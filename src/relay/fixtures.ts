@@ -19,7 +19,7 @@ export const resumeSummary =
 export const openQuestionAtStart =
   'How recently has Jeremy run model-serving or evaluation infrastructure? His application does not say.';
 
-export const conciergePrompt =
+export const applicationPrompt =
   'Is there anything relevant to this role that your résumé doesn’t make obvious?';
 
 export const scriptedNote =

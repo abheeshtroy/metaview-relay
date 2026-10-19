@@ -19,7 +19,7 @@ function groupBySeq(entries: TrailEntry[]): TrailEntry[][] {
   return groups;
 }
 
-/** Every step from the event log, including what only the hiring team saw. */
+/** Shared activity record, including what only the hiring team saw. */
 export function Trail({ entries }: { entries: TrailEntry[] }) {
   const groups = groupBySeq(entries);
   return (
@@ -27,8 +27,8 @@ export function Trail({ entries }: { entries: TrailEntry[] }) {
       <header className="trail-head">
         <h3 className="trail-title">Every step</h3>
         <p>
-          The whole journey from the log both sides are built from. It replays the same
-          way every time. Steps marked “team only” never reached Jeremy.
+          The shared activity record that keeps both sides aligned. Steps marked “team
+          only” never reached Jeremy.
         </p>
       </header>
       <ol className="trail-moments">

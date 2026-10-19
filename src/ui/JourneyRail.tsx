@@ -8,7 +8,7 @@ const stages: { id: Stage | 'reconnect'; name: string }[] = [
 ];
 const order: (Stage | 'reconnect')[] = stages.map((s) => s.id);
 
-/** Where the story is. Without a step (in the intro), it previews the journey. */
+/** Current position in the candidate relationship. Without a step, it shows the full path. */
 export function JourneyRail({ step }: { step?: Step }) {
   const current = step ? stageOf[step] : undefined;
   return (
@@ -30,7 +30,7 @@ export function JourneyRail({ step }: { step?: Step }) {
                   : 'later';
         const meta =
           s.id === 'reconnect'
-            ? 'Not built yet'
+            ? 'Future'
             : state === 'live'
               ? 'Now'
               : state === 'held'
@@ -40,8 +40,8 @@ export function JourneyRail({ step }: { step?: Step }) {
                   : step === 'held'
                     ? 'Not yet'
                     : current
-                      ? 'Next'
-                      : 'In this demo';
+                      ? 'Up next'
+                      : 'In this flow';
         return (
           <li
             key={s.id}

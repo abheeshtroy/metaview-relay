@@ -3,7 +3,7 @@ import type { RelayEvent } from '../relay/events';
 import {
   callSlot,
   clarification,
-  conciergePrompt,
+  applicationPrompt,
   interviewCall,
   interviewSlots,
   offerFacts,
@@ -79,7 +79,7 @@ function Share({ onEvent }: Props) {
   return (
     <Card task>
       <Who who="relay">Relay, for {people.employer}</Who>
-      <h3>{conciergePrompt}</h3>
+      <h3>{applicationPrompt}</h3>
       <p className="small">
         {james.name} reads this himself, word for word. Edit it however you like.
       </p>
