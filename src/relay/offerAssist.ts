@@ -1,4 +1,4 @@
-import { callSlot, offerFacts, people, type OfferFactId } from './fixtures';
+import { callSlot, offerFacts, people, type OfferFactId } from './fixtures.js';
 
 // The Offer / Close AI boundary. Relay triages each of Jeremy's questions. It may
 // answer on its own only when the question is routine and AutoFarm's approved offer

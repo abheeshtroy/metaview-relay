@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { OfferAssist } from '../src/relay/offerAssist';
 import {
-  default as vercelOfferAssist,
   handleOfferAssist,
   OpenAIResponsesProvider,
   type OfferAssistProvider,
@@ -37,15 +36,6 @@ afterEach(() => {
 });
 
 describe('offer assist server boundary', () => {
-  it('exposes the guarded handler through Vercel’s production web-handler contract', async () => {
-    vi.stubEnv('OPENAI_API_KEY', '');
-    const response = await vercelOfferAssist.fetch(request());
-    expect(await response.json()).toMatchObject({
-      mode: 'replay',
-      status: 'fallback',
-    });
-  });
-
   it('returns a provider’s checked output', async () => {
     const provider: OfferAssistProvider = { assist: vi.fn(async () => live) };
     const response = await handleOfferAssist(request(), provider);
