@@ -5,7 +5,7 @@ import {
   offerAssistSchema,
   scriptedOfferAssist,
   type OfferAssist,
-} from '../src/relay/offerAssist';
+} from '../src/relay/offerAssist.js';
 
 // Server-side only. The key never reaches the browser, and the browser never
 // receives model output that hasn't passed `checkOfferAssist`.

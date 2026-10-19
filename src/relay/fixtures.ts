@@ -1,6 +1,6 @@
 // Synthetic demo script. Every person, company, number and sentence here is fictional.
 
-import type { Coverage, TranscriptExcerpt, TranscriptLine } from './interviewAssist';
+import type { Coverage, TranscriptExcerpt, TranscriptLine } from './interviewAssist.js';
 
 export const people = {
   candidate: { name: 'Jeremy Clarkson', first: 'Jeremy', initials: 'JC' },

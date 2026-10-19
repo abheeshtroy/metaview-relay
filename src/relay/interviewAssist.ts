@@ -1,4 +1,4 @@
-import { interviewScripts, type FollowUp, type InterviewPlan } from './fixtures';
+import { interviewScripts, type FollowUp, type InterviewPlan } from './fixtures.js';
 
 // The Interview stage's AI boundary. In the call, Relay marks the moment James
 // asks his planned question and quotes it exactly. When the call ends, it notes
