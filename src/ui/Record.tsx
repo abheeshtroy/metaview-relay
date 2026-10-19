@@ -4,7 +4,7 @@ import { Trail } from './Trail';
 
 const { candidate: jeremy, recruiter: james } = people;
 
-/** The end of the journey: where each question stands, and who did the work. */
+/** Summary of where each question stands and who did the work. */
 export function Record({ state, onReplay }: { state: RelayState; onReplay: () => void }) {
   const questions = state.offer?.questions ?? [];
   const open = questions.filter(
@@ -51,7 +51,7 @@ export function Record({ state, onReplay }: { state: RelayState; onReplay: () =>
         </div>
         <div className="actions">
           <button className="pill" onClick={onReplay}>
-            Replay from the start
+            Start again
           </button>
         </div>
       </div>

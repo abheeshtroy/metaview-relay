@@ -225,9 +225,10 @@ describe('framing', () => {
     expect(html).toContain('synthetic');
   });
 
-  it('the rail marks only Reconnect as unbuilt', () => {
+  it('the rail marks Reconnect as future work without implying the current flow is incomplete', () => {
     const html = text(renderToStaticMarkup(<JourneyRail step="offer" />));
-    expect(html.match(/Not built yet/g)).toHaveLength(1);
+    expect(html).toContain('Future');
+    expect(html).not.toMatch(/not built/i);
     expect(html).toContain('Offer');
   });
 });

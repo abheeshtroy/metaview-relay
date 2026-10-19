@@ -90,7 +90,6 @@ function App() {
             Relay <em>a concept for Metaview</em>
           </span>
         </a>
-        <span className="disclaimer">Independent concept · synthetic data</span>
         <div className="topbar-actions">
           <button className="ghost" onClick={() => setIntroOpen(true)}>
             What is this?
@@ -150,7 +149,7 @@ function App() {
             {state.step === 'held' && (
               <div className="actions center">
                 <button className="pill" onClick={reset}>
-                  Replay from the start
+                  Start again
                 </button>
               </div>
             )}

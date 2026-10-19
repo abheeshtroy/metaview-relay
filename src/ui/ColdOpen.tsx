@@ -11,22 +11,22 @@ export interface IntroPage {
   body: string;
 }
 
-/** The three intro pages: what Relay is, how context is shared, what the viewer will do. */
+/** The opening context: what Relay is, how responsibility stays with people, and the workspace. */
 export const introPages: IntroPage[] = [
   {
     label: 'What Relay is',
     title: 'Recruiting runs on conversations. Relay keeps them connected.',
-    body: 'A concept for the candidate side of an agentic recruiting platform. Relay does the routine work between conversations, so the recruiter and the candidate spend their time on what needs a person.',
+    body: 'An independent concept for a candidate relationship layer. Relay handles routine work between conversations so candidates and recruiters can focus on what needs a person.',
   },
   {
     label: 'Who does what',
     title: 'Relay does the routine work. People make the calls.',
-    body: `Relay reads, asks, takes notes, drafts and answers from approved facts. ${recruiter.first} decides what the interview is for, whether to make an offer, and anything about pay. ${candidate.first}’s words are always quoted exactly as he wrote them.`,
+    body: `Relay coordinates, takes notes and answers routine offer questions from approved facts. ${recruiter.first} decides the interview, offer and pay. ${candidate.first}’s words remain his own.`,
   },
   {
-    label: 'What you’ll do',
-    title: 'Play both sides, from application to offer.',
-    body: `About three minutes. ${candidate.first}’s portal and ${recruiter.first}’s workspace sit side by side. Act on the side marked “Your move” and watch the other one change.`,
+    label: 'The workspace',
+    title: 'Candidate and recruiter stay in sync from application through offer.',
+    body: `${candidate.first}’s portal and ${recruiter.first}’s workspace sit side by side. Continue from the side marked “Your move”; the other side updates with the shared context.`,
   },
 ];
 
@@ -148,7 +148,7 @@ export function ColdOpen({ onClose }: Props) {
             autoFocus
             onClick={() => (last ? onClose(true) : setPage(page + 1))}
           >
-            {last ? `Start as ${candidate.first}` : 'Next'}
+            {last ? 'Open workspace' : 'Continue'}
           </button>
         </footer>
 
