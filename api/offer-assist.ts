@@ -101,3 +101,8 @@ export async function handleOfferAssist(
     return responseJson(scriptedOfferAssist(question, 'provider-error'));
   }
 }
+
+// Vercel discovers files in /api and invokes this Web Standard handler in its
+// Node.js runtime. Keeping this adapter at the edge of the module means Vite's
+// local middleware and production use the exact same guarded implementation.
+export default { fetch: handleOfferAssist };
