@@ -9,21 +9,21 @@ the same guarded `handleOfferAssist` implementation as the local Vite middleware
 Set these in **Vercel Project Settings → Environment Variables** for every
 environment where you want live provider attempts:
 
-| Variable         | Required | Purpose                                                                                                   |
-| ---------------- | -------- | --------------------------------------------------------------------------------------------------------- |
-| `OPENAI_API_KEY` | No       | Server-only Responses API credential. If absent, Offer Assist returns its deterministic offline fallback. |
-| `OPENAI_MODEL`   | No       | Optional Responses model override. Defaults to `gpt-4.1-mini`.                                            |
+| Variable            | Required | Purpose                                                                                                            |
+| ------------------- | -------- | ------------------------------------------------------------------------------------------------------------------ |
+| `ANTHROPIC_API_KEY` | No       | Server-only Anthropic Messages API credential. If absent, Offer Assist returns its deterministic offline fallback. |
+| `ANTHROPIC_MODEL`   | No       | Optional Messages model override. Defaults to `claude-haiku-4-5-20251001`.                                         |
 
-Do not create variables named `VITE_OPENAI_API_KEY` or otherwise add this
+Do not create variables named `VITE_ANTHROPIC_API_KEY` or otherwise add this
 credential to a `VITE_`-prefixed variable. Vite exposes only `VITE_` variables
-to the client bundle; this project reads `OPENAI_API_KEY` only inside the server
+to the client bundle; this project reads `ANTHROPIC_API_KEY` only inside the server
 function and local Vite middleware.
 
 ## Deployment steps
 
 1. Import the repository into Vercel (the Vite framework and `npm run build`
    are detected from the project files).
-2. Add `OPENAI_API_KEY` only if live provider attempts are desired. Add it to
+2. Add `ANTHROPIC_API_KEY` only if live provider attempts are desired. Add it to
    Preview and Production separately when those environments need it.
 3. Deploy. Vercel discovers the default web handler in `api/offer-assist.ts`
    and maps it to `/api/offer-assist`; static client assets are emitted to
@@ -35,7 +35,7 @@ function and local Vite middleware.
 The deployment boundary validates provider output before it becomes
 candidate-visible and falls back deterministically for missing credentials,
 provider failures, malformed output, or invalid output. This repository’s tests
-mock provider responses; they do not verify a live OpenAI provider response.
+mock provider responses; they do not verify a live Anthropic provider response.
 
 ## Local development
 

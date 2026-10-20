@@ -59,7 +59,7 @@ needed.
 
 Offer Assist is an optional, guarded server-side helper for an offer question
 written in Jeremy's own words. The browser sends a question to
-`POST /api/offer-assist`; the server may call the OpenAI Responses API and
+`POST /api/offer-assist`; the server may call the Anthropic Messages API and
 validates its result before anything is returned to the browser. The result is
 checked again by Relay's state model.
 
@@ -75,14 +75,14 @@ Live provider attempts are optional. Copy `.env.example` to `.env.local` for
 local development and set the secret there:
 
 ```sh
-OPENAI_API_KEY=your_server_side_key
-# Optional; defaults to gpt-4.1-mini
-OPENAI_MODEL=gpt-4.1-mini
+ANTHROPIC_API_KEY=your_server_side_key
+# Optional; defaults to claude-haiku-4-5-20251001
+ANTHROPIC_MODEL=claude-haiku-4-5-20251001
 ```
 
 Never commit `.env.local`, put the key in client code, or use a `VITE_`-prefixed
-environment variable such as `VITE_OPENAI_API_KEY`: Vite makes `VITE_`
-variables available to the browser. For Vercel, configure `OPENAI_API_KEY` in
+environment variable such as `VITE_ANTHROPIC_API_KEY`: Vite makes `VITE_`
+variables available to the browser. For Vercel, configure `ANTHROPIC_API_KEY` in
 **Project Settings → Environment Variables** for the environments that need
 live attempts. See [DEPLOYMENT.md](DEPLOYMENT.md) for deployment details.
 

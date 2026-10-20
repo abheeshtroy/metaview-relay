@@ -5,8 +5,8 @@ import { handleOfferAssist } from './api/offer-assist';
 
 export default defineConfig(({ mode }) => {
   // Server-only secrets from .env.local reach the dev API, never the client bundle.
-  const env = loadEnv(mode, process.cwd(), 'OPENAI_');
-  for (const key of ['OPENAI_API_KEY', 'OPENAI_MODEL'])
+  const env = loadEnv(mode, process.cwd(), 'ANTHROPIC_');
+  for (const key of ['ANTHROPIC_API_KEY', 'ANTHROPIC_MODEL'])
     if (env[key] && !process.env[key]) process.env[key] = env[key];
 
   return {

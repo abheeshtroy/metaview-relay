@@ -20,8 +20,8 @@ try {
   const { default: offerAssistFunction } = await import(
     pathToFileURL(join(output, 'api/offer-assist.js')).href
   );
-  const oldKey = process.env.OPENAI_API_KEY;
-  process.env.OPENAI_API_KEY = '';
+  const oldKey = process.env.ANTHROPIC_API_KEY;
+  process.env.ANTHROPIC_API_KEY = '';
   try {
     const get = await offerAssistFunction.fetch(
       new Request('https://relay.example/api/offer-assist'),
@@ -46,8 +46,8 @@ try {
       status: 'fallback',
     });
   } finally {
-    if (oldKey === undefined) delete process.env.OPENAI_API_KEY;
-    else process.env.OPENAI_API_KEY = oldKey;
+    if (oldKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = oldKey;
   }
 } finally {
   await rm(output, { recursive: true, force: true });
