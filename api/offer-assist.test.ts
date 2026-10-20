@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { OfferAssist } from '../src/relay/offerAssist';
 import {
   handleOfferAssist,
-  OpenAIResponsesProvider,
+  AnthropicMessagesProvider,
   type OfferAssistProvider,
 } from './offer-assist';
 
@@ -26,7 +26,12 @@ const modelReturns = (output: unknown) =>
   vi.stubGlobal(
     'fetch',
     vi.fn(
-      async () => new Response(JSON.stringify({ output_text: JSON.stringify(output) })),
+      async () =>
+        new Response(
+          JSON.stringify({
+            content: [{ type: 'text', text: JSON.stringify(output) }],
+          }),
+        ),
     ),
   );
 
@@ -44,7 +49,7 @@ describe('offer assist server boundary', () => {
   });
 
   it('uses offline triage when no key is configured', async () => {
-    vi.stubEnv('OPENAI_API_KEY', '');
+    vi.stubEnv('ANTHROPIC_API_KEY', '');
     const response = await handleOfferAssist(request());
     expect(await response.json()).toMatchObject({ mode: 'replay', status: 'fallback' });
   });
@@ -78,21 +83,30 @@ describe('offer assist server boundary', () => {
     });
   });
 
-  it('parses Responses output and labels it live', async () => {
+  it('parses a successful Anthropic Messages response and labels it live', async () => {
     const { mode: _m, status: _s, ...output } = live;
     modelReturns(output);
     const response = await handleOfferAssist(
       request(),
-      new OpenAIResponsesProvider('test-key'),
+      new AnthropicMessagesProvider('test-key'),
     );
     expect(await response.json()).toMatchObject({ mode: 'live', status: 'success' });
+    expect(fetch).toHaveBeenCalledWith(
+      'https://api.anthropic.com/v1/messages',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          'x-api-key': 'test-key',
+          'anthropic-version': '2023-06-01',
+        }),
+      }),
+    );
   });
 
   it('rejects model output that invents a number, and falls back', async () => {
     modelReturns({ ...live, answer: 'Start on 9 November with a bonus.' });
     const response = await handleOfferAssist(
       request(),
-      new OpenAIResponsesProvider('test-key'),
+      new AnthropicMessagesProvider('test-key'),
     );
     expect(await response.json()).toMatchObject({
       mode: 'replay',
@@ -100,22 +114,86 @@ describe('offer assist server boundary', () => {
     });
   });
 
-  it.each([
-    ['malformed output', 'not JSON'],
-    ['empty output', undefined],
-  ])('falls back after %s from Responses', async (_name, output) => {
+  it('falls back after an Anthropic provider failure', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => new Response(JSON.stringify({ output_text: output }))),
+      vi.fn(async () => new Response('unavailable', { status: 503 })),
     );
     const response = await handleOfferAssist(
       request(),
-      new OpenAIResponsesProvider('test-key'),
+      new AnthropicMessagesProvider('test-key'),
     );
     expect(await response.json()).toMatchObject({
       mode: 'replay',
       status: 'provider-error',
       answer: live.answer,
+    });
+  });
+
+  it.each([
+    ['malformed output', 'not JSON'],
+    ['empty output', undefined],
+  ])('falls back after %s from Anthropic', async (_name, output) => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ content: [{ type: 'text', text: output }] })),
+      ),
+    );
+    const response = await handleOfferAssist(
+      request(),
+      new AnthropicMessagesProvider('test-key'),
+    );
+    expect(await response.json()).toMatchObject({
+      mode: 'replay',
+      status: 'provider-error',
+      answer: live.answer,
+    });
+  });
+
+  it('falls back when the Anthropic request times out', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (_url, init: RequestInit) =>
+          new Promise<Response>((_resolve, reject) =>
+            init.signal?.addEventListener('abort', () => reject(new Error('aborted'))),
+          ),
+      ),
+    );
+    const responsePromise = handleOfferAssist(
+      request(),
+      new AnthropicMessagesProvider('test-key', undefined, 1),
+    );
+    await vi.advanceTimersByTimeAsync(1);
+    const response = await responsePromise;
+    vi.useRealTimers();
+    expect(await response.json()).toMatchObject({
+      mode: 'replay',
+      status: 'provider-error',
+      answer: live.answer,
+    });
+  });
+
+  it.each([
+    [
+      'sensitive question',
+      'What is the base salary?',
+      { ...live, concerns: ['compensation'] },
+    ],
+    ['unsupported question', 'Can I bring my dog to work?', live],
+  ])('falls back when Anthropic tries to answer a %s', async (_name, ask, output) => {
+    modelReturns(output);
+    const response = await handleOfferAssist(
+      request({ question: ask }),
+      new AnthropicMessagesProvider('test-key'),
+    );
+    expect(await response.json()).toMatchObject({
+      mode: 'replay',
+      status: 'provider-error',
+      route: 'james',
     });
   });
 
