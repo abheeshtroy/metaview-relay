@@ -278,4 +278,6 @@ export async function handleOfferAssist(
 // Vercel discovers files in /api and invokes this Web Standard handler in its
 // Node.js runtime. Keeping this adapter at the edge of the module means Vite's
 // local middleware and production use the exact same guarded implementation.
-export default { fetch: handleOfferAssist };
+// Vercel calls `fetch(request, context)`, so only the request is forwarded:
+// the runtime context must never be mistaken for an injected provider.
+export default { fetch: (request: Request) => handleOfferAssist(request) };
