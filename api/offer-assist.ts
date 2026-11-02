@@ -13,6 +13,8 @@ export interface OfferAssistProvider {
   assist(question: string): Promise<OfferAssist>;
 }
 
+type CheckedOfferAssist = Exclude<ReturnType<typeof checkOfferAssist>, null>;
+
 type OfferAssistDiagnostic =
   | { category: 'missing-key' }
   | { category: 'provider-http'; providerStatus: number }
@@ -35,13 +37,21 @@ type OfferAssistStage =
   | 'response-shape'
   | 'model-text-json'
   | 'relay-validation'
-  | 'http-boundary';
+  | 'http-revalidation'
+  | 'http-response-build'
+  | 'http-response-serialization';
 
 export interface OfferAssistProviderDependencies {
   buildRequest?: (question: string, apiKey: string, model: string) => RequestInit;
   fetch?: typeof fetch;
   parseModelText?: typeof JSON.parse;
   validate?: typeof checkOfferAssist;
+}
+
+export interface OfferAssistHttpDependencies {
+  revalidate?: typeof checkOfferAssist;
+  buildCandidateResponse?: (checked: CheckedOfferAssist) => OfferAssist;
+  serializeCandidateResponse?: (body: OfferAssist) => Response;
 }
 
 class OfferAssistProviderError extends Error {
@@ -89,6 +99,10 @@ function responseJson(body: unknown, status = 200) {
     status,
     headers: { 'content-type': 'application/json' },
   });
+}
+
+function buildCandidateResponse(checked: CheckedOfferAssist): OfferAssist {
+  return { ...checked, mode: 'live', status: 'success' };
 }
 
 function buildAnthropicRequest(
@@ -206,6 +220,7 @@ export class AnthropicMessagesProvider implements OfferAssistProvider {
 export async function handleOfferAssist(
   request: Request,
   provider?: OfferAssistProvider,
+  dependencies: OfferAssistHttpDependencies = {},
 ): Promise<Response> {
   if (request.method !== 'POST')
     return responseJson({ error: 'method not allowed' }, 405);
@@ -222,17 +237,40 @@ export async function handleOfferAssist(
     logOfferAssistDiagnostic({ category: 'missing-key' });
     return responseJson(scriptedOfferAssist(question, 'fallback'));
   }
+  let result: OfferAssist;
   try {
-    const result = await (provider ?? new AnthropicMessagesProvider(key!)).assist(
-      question,
-    );
+    result = await (provider ?? new AnthropicMessagesProvider(key!)).assist(question);
+  } catch (error) {
+    logOfferAssistDiagnostic(diagnosticFor(error, 'http-revalidation'));
+    return responseJson(scriptedOfferAssist(question, 'provider-error'));
+  }
+
+  let checked: CheckedOfferAssist;
+  try {
     // Providers are never trusted with candidate-visible text or provenance.
     // Recreate both from the checked contract at the HTTP boundary.
-    const checked = checkOfferAssist(question, result);
-    if (!checked) throw new Error('provider result failed checks');
-    return responseJson({ ...checked, mode: 'live', status: 'success' });
+    const revalidated = (dependencies.revalidate ?? checkOfferAssist)(question, result);
+    if (!revalidated) throw new Error('provider result failed checks');
+    checked = revalidated;
   } catch (error) {
-    logOfferAssistDiagnostic(diagnosticFor(error, 'http-boundary'));
+    logOfferAssistDiagnostic(diagnosticFor(error, 'http-revalidation'));
+    return responseJson(scriptedOfferAssist(question, 'provider-error'));
+  }
+
+  let candidateResponse: OfferAssist;
+  try {
+    candidateResponse = (dependencies.buildCandidateResponse ?? buildCandidateResponse)(
+      checked,
+    );
+  } catch (error) {
+    logOfferAssistDiagnostic(diagnosticFor(error, 'http-response-build'));
+    return responseJson(scriptedOfferAssist(question, 'provider-error'));
+  }
+
+  try {
+    return (dependencies.serializeCandidateResponse ?? responseJson)(candidateResponse);
+  } catch (error) {
+    logOfferAssistDiagnostic(diagnosticFor(error, 'http-response-serialization'));
     return responseJson(scriptedOfferAssist(question, 'provider-error'));
   }
 }
