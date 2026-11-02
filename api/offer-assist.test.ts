@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { OfferAssist } from '../src/relay/offerAssist';
-import {
+import offerAssistFunction, {
   handleOfferAssist,
   AnthropicMessagesProvider,
   type OfferAssistHttpDependencies,
@@ -45,6 +45,41 @@ afterEach(() => {
 });
 
 describe('offer assist server boundary', () => {
+  it('reaches the live path through the production handler with a real Anthropic response', async () => {
+    // Vercel invokes `fetch(request, context)`; the context must not be
+    // mistaken for an injected provider.
+    vi.stubEnv('ANTHROPIC_API_KEY', 'test-key');
+    const upstream = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            id: 'msg_test',
+            type: 'message',
+            role: 'assistant',
+            model: 'claude-haiku-4-5-20251001',
+            content: [{ type: 'text', text: JSON.stringify(live) }],
+            stop_reason: 'end_turn',
+            stop_sequence: null,
+            usage: { input_tokens: 512, output_tokens: 96 },
+          }),
+          { headers: { 'content-type': 'application/json' } },
+        ),
+    );
+    vi.stubGlobal('fetch', upstream);
+    const diagnostic = captureDiagnostics();
+    const response = await offerAssistFunction.fetch(request(), {
+      waitUntil: () => undefined,
+    });
+    expect(await response.json()).toMatchObject({
+      mode: 'live',
+      status: 'success',
+      route: 'answer',
+      answer: live.answer,
+    });
+    expect(upstream).toHaveBeenCalledOnce();
+    expect(diagnostic).not.toHaveBeenCalled();
+  });
+
   it('returns a provider’s checked output', async () => {
     const provider: OfferAssistProvider = { assist: vi.fn(async () => live) };
     const response = await handleOfferAssist(request(), provider);
