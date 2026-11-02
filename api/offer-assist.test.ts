@@ -78,6 +78,7 @@ describe('offer assist server boundary', () => {
       event: 'offer-assist-fallback',
       category: 'unexpected-runtime-error',
       errorName: 'Error',
+      stage: 'http-boundary',
     });
   });
 
@@ -205,31 +206,80 @@ describe('offer assist server boundary', () => {
     });
   });
 
-  it('keeps an unrelated TypeError after fetch as an unexpected runtime error', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => ({
-        ok: true,
-        json: async () => {
-          throw new TypeError('broken body');
+  it.each([
+    [
+      'request-build',
+      new AnthropicMessagesProvider('test-key', undefined, undefined, {
+        buildRequest: () => {
+          throw new TypeError('private build failure');
         },
-      })),
-    );
-    const diagnostic = captureDiagnostics();
-    const response = await handleOfferAssist(
-      request(),
-      new AnthropicMessagesProvider('test-key'),
-    );
-    expect(await response.json()).toMatchObject({
-      mode: 'replay',
-      status: 'provider-error',
-    });
-    expect(diagnostic).toHaveBeenCalledWith({
-      event: 'offer-assist-fallback',
-      category: 'unexpected-runtime-error',
-      errorName: 'TypeError',
-    });
-  });
+      }),
+    ],
+    [
+      'response-json',
+      new AnthropicMessagesProvider('test-key', undefined, undefined, {
+        fetch: vi.fn(async () => ({
+          ok: true,
+          json: () => Promise.reject(new TypeError()),
+        })),
+      }),
+    ],
+    [
+      'response-shape',
+      new AnthropicMessagesProvider('test-key', undefined, undefined, {
+        fetch: vi.fn(async () => ({
+          ok: true,
+          json: async () => ({
+            content: new Proxy([], {
+              get: () => {
+                throw new TypeError();
+              },
+            }),
+          }),
+        })),
+      }),
+    ],
+    [
+      'model-text-json',
+      new AnthropicMessagesProvider('test-key', undefined, undefined, {
+        fetch: vi.fn(async () => ({
+          ok: true,
+          json: async () => ({ content: [{ type: 'text', text: '{}' }] }),
+        })),
+        parseModelText: () => {
+          throw new TypeError();
+        },
+      }),
+    ],
+    [
+      'relay-validation',
+      new AnthropicMessagesProvider('test-key', undefined, undefined, {
+        fetch: vi.fn(async () => ({
+          ok: true,
+          json: async () => ({ content: [{ type: 'text', text: '{}' }] }),
+        })),
+        validate: () => {
+          throw new TypeError();
+        },
+      }),
+    ],
+  ] as const)(
+    'adds the fixed stage for a TypeError during %s',
+    async (stage, provider) => {
+      const diagnostic = captureDiagnostics();
+      const response = await handleOfferAssist(request(), provider);
+      expect(await response.json()).toMatchObject({
+        mode: 'replay',
+        status: 'provider-error',
+      });
+      expect(diagnostic).toHaveBeenCalledWith({
+        event: 'offer-assist-fallback',
+        category: 'unexpected-runtime-error',
+        errorName: 'TypeError',
+        stage,
+      });
+    },
+  );
 
   it('classifies invalid JSON inside Anthropic text output', async () => {
     vi.stubGlobal(
@@ -312,6 +362,19 @@ describe('offer assist server boundary', () => {
     expect(logged).not.toContain('test-key-that-must-not-be-logged');
     expect(logged).not.toContain(privateResponse);
     expect(logged).not.toContain('x-api-key');
+  });
+
+  it('never includes an unexpected error message in fallback diagnostics', async () => {
+    const diagnostic = captureDiagnostics();
+    const privateFailure = 'private exception detail that must not be logged';
+    await handleOfferAssist(request(), {
+      assist: vi.fn(async () => {
+        throw new TypeError(privateFailure);
+      }),
+    });
+    const logged = JSON.stringify(diagnostic.mock.calls);
+    expect(logged).not.toContain(privateFailure);
+    expect(logged).toContain('http-boundary');
   });
 
   it.each([
