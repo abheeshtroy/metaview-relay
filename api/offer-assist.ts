@@ -53,6 +53,13 @@ function safeErrorName(error: unknown): SafeErrorName {
   return 'Error';
 }
 
+function isSyntaxError(error: unknown): error is SyntaxError {
+  return (
+    error instanceof SyntaxError ||
+    (error instanceof Error && error.name === 'SyntaxError')
+  );
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
@@ -111,7 +118,8 @@ export class AnthropicMessagesProvider implements OfferAssistProvider {
       let payload: unknown;
       try {
         payload = await upstream.json();
-      } catch {
+      } catch (error) {
+        if (!isSyntaxError(error)) throw error;
         throw new OfferAssistProviderError({
           category: 'json-parsing-failure',
           errorName: 'SyntaxError',
@@ -127,7 +135,8 @@ export class AnthropicMessagesProvider implements OfferAssistProvider {
       let output: unknown;
       try {
         output = JSON.parse(text);
-      } catch {
+      } catch (error) {
+        if (!isSyntaxError(error)) throw error;
         throw new OfferAssistProviderError({
           category: 'json-parsing-failure',
           errorName: 'SyntaxError',
