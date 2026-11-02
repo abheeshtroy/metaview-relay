@@ -21,9 +21,28 @@ type OfferAssistDiagnostic =
   | { category: 'json-parsing-failure'; errorName: 'SyntaxError' }
   | { category: 'response-shape-failure' }
   | { category: 'validation-rejection' }
-  | { category: 'unexpected-runtime-error'; errorName: SafeErrorName };
+  | {
+      category: 'unexpected-runtime-error';
+      errorName: SafeErrorName;
+      stage: OfferAssistStage;
+    };
 
 type SafeErrorName = 'Error' | 'TypeError' | 'RangeError' | 'UnknownError';
+type OfferAssistStage =
+  | 'request-build'
+  | 'outbound-fetch'
+  | 'response-json'
+  | 'response-shape'
+  | 'model-text-json'
+  | 'relay-validation'
+  | 'http-boundary';
+
+export interface OfferAssistProviderDependencies {
+  buildRequest?: (question: string, apiKey: string, model: string) => RequestInit;
+  fetch?: typeof fetch;
+  parseModelText?: typeof JSON.parse;
+  validate?: typeof checkOfferAssist;
+}
 
 class OfferAssistProviderError extends Error {
   constructor(readonly diagnostic: OfferAssistDiagnostic) {
@@ -37,12 +56,13 @@ function logOfferAssistDiagnostic(diagnostic: OfferAssistDiagnostic) {
   console.error({ event: 'offer-assist-fallback', ...diagnostic });
 }
 
-function diagnosticFor(error: unknown): OfferAssistDiagnostic {
+function diagnosticFor(error: unknown, stage: OfferAssistStage): OfferAssistDiagnostic {
   return error instanceof OfferAssistProviderError
     ? error.diagnostic
     : {
         category: 'unexpected-runtime-error',
         errorName: safeErrorName(error),
+        stage,
       };
 }
 
@@ -71,81 +91,112 @@ function responseJson(body: unknown, status = 200) {
   });
 }
 
+function buildAnthropicRequest(
+  question: string,
+  apiKey: string,
+  model: string,
+): RequestInit {
+  return {
+    method: 'POST',
+    headers: {
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: 400,
+      system: `${offerAssistInstructions} Return only a JSON object with the required Offer Assist fields.`,
+      messages: [{ role: 'user', content: offerAssistInput(question) }],
+    }),
+  };
+}
+
 export class AnthropicMessagesProvider implements OfferAssistProvider {
   constructor(
     private readonly apiKey: string,
     private readonly model = process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001',
     private readonly timeoutMs = 8_000,
+    private readonly dependencies: OfferAssistProviderDependencies = {},
   ) {}
 
   async assist(question: string): Promise<OfferAssist> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
-      let upstream: Response;
+      let stage: OfferAssistStage = 'request-build';
       try {
-        upstream = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          signal: controller.signal,
-          headers: {
-            'x-api-key': this.apiKey,
-            'anthropic-version': '2023-06-01',
-            'content-type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: this.model,
-            max_tokens: 400,
-            system: `${offerAssistInstructions} Return only a JSON object with the required Offer Assist fields.`,
-            messages: [{ role: 'user', content: offerAssistInput(question) }],
-          }),
-        });
-      } catch (error) {
-        if (controller.signal.aborted)
+        const request = (this.dependencies.buildRequest ?? buildAnthropicRequest)(
+          question,
+          this.apiKey,
+          this.model,
+        );
+        let upstream: Response;
+        stage = 'outbound-fetch';
+        try {
+          upstream = await (this.dependencies.fetch ?? fetch)(
+            'https://api.anthropic.com/v1/messages',
+            { ...request, signal: controller.signal },
+          );
+        } catch (error) {
+          if (controller.signal.aborted)
+            throw new OfferAssistProviderError({
+              category: 'abort-timeout',
+              errorName: 'AbortError',
+            });
           throw new OfferAssistProviderError({
-            category: 'abort-timeout',
-            errorName: 'AbortError',
+            category: 'network-fetch-failure',
+            errorName: safeErrorName(error),
           });
-        throw new OfferAssistProviderError({
-          category: 'network-fetch-failure',
-          errorName: safeErrorName(error),
-        });
-      }
-      if (!upstream.ok)
-        throw new OfferAssistProviderError({
-          category: 'provider-http',
-          providerStatus: upstream.status,
-        });
-      let payload: unknown;
-      try {
-        payload = await upstream.json();
+        }
+        if (!upstream.ok)
+          throw new OfferAssistProviderError({
+            category: 'provider-http',
+            providerStatus: upstream.status,
+          });
+        let payload: unknown;
+        stage = 'response-json';
+        try {
+          payload = await upstream.json();
+        } catch (error) {
+          if (!isSyntaxError(error)) throw error;
+          throw new OfferAssistProviderError({
+            category: 'json-parsing-failure',
+            errorName: 'SyntaxError',
+          });
+        }
+        stage = 'response-shape';
+        if (!isRecord(payload) || !Array.isArray(payload.content))
+          throw new OfferAssistProviderError({ category: 'response-shape-failure' });
+        const text = payload.content.find(
+          (part): part is Record<string, unknown> =>
+            isRecord(part) && part.type === 'text',
+        )?.text;
+        if (typeof text !== 'string')
+          throw new OfferAssistProviderError({ category: 'response-shape-failure' });
+        let output: unknown;
+        stage = 'model-text-json';
+        try {
+          output = (this.dependencies.parseModelText ?? JSON.parse)(text);
+        } catch (error) {
+          if (!isSyntaxError(error)) throw error;
+          throw new OfferAssistProviderError({
+            category: 'json-parsing-failure',
+            errorName: 'SyntaxError',
+          });
+        }
+        stage = 'relay-validation';
+        const checked = (this.dependencies.validate ?? checkOfferAssist)(
+          question,
+          output,
+        );
+        if (!checked)
+          throw new OfferAssistProviderError({ category: 'validation-rejection' });
+        return { ...checked, mode: 'live', status: 'success' };
       } catch (error) {
-        if (!isSyntaxError(error)) throw error;
-        throw new OfferAssistProviderError({
-          category: 'json-parsing-failure',
-          errorName: 'SyntaxError',
-        });
+        if (error instanceof OfferAssistProviderError) throw error;
+        throw new OfferAssistProviderError(diagnosticFor(error, stage));
       }
-      if (!isRecord(payload) || !Array.isArray(payload.content))
-        throw new OfferAssistProviderError({ category: 'response-shape-failure' });
-      const text = payload.content.find(
-        (part): part is Record<string, unknown> => isRecord(part) && part.type === 'text',
-      )?.text;
-      if (typeof text !== 'string')
-        throw new OfferAssistProviderError({ category: 'response-shape-failure' });
-      let output: unknown;
-      try {
-        output = JSON.parse(text);
-      } catch (error) {
-        if (!isSyntaxError(error)) throw error;
-        throw new OfferAssistProviderError({
-          category: 'json-parsing-failure',
-          errorName: 'SyntaxError',
-        });
-      }
-      const checked = checkOfferAssist(question, output);
-      if (!checked)
-        throw new OfferAssistProviderError({ category: 'validation-rejection' });
-      return { ...checked, mode: 'live', status: 'success' };
     } finally {
       clearTimeout(timeout);
     }
@@ -181,7 +232,7 @@ export async function handleOfferAssist(
     if (!checked) throw new Error('provider result failed checks');
     return responseJson({ ...checked, mode: 'live', status: 'success' });
   } catch (error) {
-    logOfferAssistDiagnostic(diagnosticFor(error));
+    logOfferAssistDiagnostic(diagnosticFor(error, 'http-boundary'));
     return responseJson(scriptedOfferAssist(question, 'provider-error'));
   }
 }
