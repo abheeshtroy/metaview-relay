@@ -94,6 +94,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
+// Claude often returns the requested JSON object inside one Markdown code fence
+// (```json … ```). Unwrap only when the fence is the whole text block; anything
+// else, including prose around a fence, is parsed as-is and so still rejected.
+const wholeFencedBlock = /^```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n?```$/i;
+
+function modelJsonText(text: string) {
+  const trimmed = text.trim();
+  return wholeFencedBlock.exec(trimmed)?.[1] ?? trimmed;
+}
+
 function responseJson(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -191,7 +201,7 @@ export class AnthropicMessagesProvider implements OfferAssistProvider {
         let output: unknown;
         stage = 'model-text-json';
         try {
-          output = (this.dependencies.parseModelText ?? JSON.parse)(text);
+          output = (this.dependencies.parseModelText ?? JSON.parse)(modelJsonText(text));
         } catch (error) {
           if (!isSyntaxError(error)) throw error;
           throw new OfferAssistProviderError({
