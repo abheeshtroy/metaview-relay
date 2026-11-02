@@ -3,6 +3,7 @@ import type { OfferAssist } from '../src/relay/offerAssist';
 import {
   handleOfferAssist,
   AnthropicMessagesProvider,
+  type OfferAssistHttpDependencies,
   type OfferAssistProvider,
 } from './offer-assist';
 
@@ -78,7 +79,7 @@ describe('offer assist server boundary', () => {
       event: 'offer-assist-fallback',
       category: 'unexpected-runtime-error',
       errorName: 'Error',
-      stage: 'http-boundary',
+      stage: 'http-revalidation',
     });
   });
 
@@ -374,8 +375,56 @@ describe('offer assist server boundary', () => {
     });
     const logged = JSON.stringify(diagnostic.mock.calls);
     expect(logged).not.toContain(privateFailure);
-    expect(logged).toContain('http-boundary');
+    expect(logged).toContain('http-revalidation');
   });
+
+  it.each([
+    [
+      'http-revalidation',
+      {
+        revalidate: () => {
+          throw new TypeError('private revalidation failure');
+        },
+      },
+    ],
+    [
+      'http-response-build',
+      {
+        buildCandidateResponse: () => {
+          throw new TypeError('private response build failure');
+        },
+      },
+    ],
+    [
+      'http-response-serialization',
+      {
+        serializeCandidateResponse: () => {
+          throw new TypeError('private serialization failure');
+        },
+      },
+    ],
+  ] as const)(
+    'adds the fixed HTTP stage for a TypeError during %s without logging private details',
+    async (stage, dependencies: OfferAssistHttpDependencies) => {
+      const diagnostic = captureDiagnostics();
+      const response = await handleOfferAssist(
+        request(),
+        { assist: vi.fn(async () => live) },
+        dependencies,
+      );
+      expect(await response.json()).toMatchObject({
+        mode: 'replay',
+        status: 'provider-error',
+      });
+      expect(diagnostic).toHaveBeenCalledWith({
+        event: 'offer-assist-fallback',
+        category: 'unexpected-runtime-error',
+        errorName: 'TypeError',
+        stage,
+      });
+      expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('private');
+    },
+  );
 
   it.each([
     [
