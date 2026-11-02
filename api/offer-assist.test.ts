@@ -205,6 +205,32 @@ describe('offer assist server boundary', () => {
     });
   });
 
+  it('keeps an unrelated TypeError after fetch as an unexpected runtime error', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => {
+          throw new TypeError('broken body');
+        },
+      })),
+    );
+    const diagnostic = captureDiagnostics();
+    const response = await handleOfferAssist(
+      request(),
+      new AnthropicMessagesProvider('test-key'),
+    );
+    expect(await response.json()).toMatchObject({
+      mode: 'replay',
+      status: 'provider-error',
+    });
+    expect(diagnostic).toHaveBeenCalledWith({
+      event: 'offer-assist-fallback',
+      category: 'unexpected-runtime-error',
+      errorName: 'TypeError',
+    });
+  });
+
   it('classifies invalid JSON inside Anthropic text output', async () => {
     vi.stubGlobal(
       'fetch',
