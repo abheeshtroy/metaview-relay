@@ -301,17 +301,31 @@ export const offerAssistSchema = {
   },
 } as const;
 
+// Relay only lets a routine answer through when it is exactly the approved
+// wording for those topics (see `checkOfferAssist`). The model therefore picks
+// topics and copies approved answers; it never writes its own answer text.
 export const offerAssistInstructions = [
   `You triage one question from ${people.candidate.first}, a candidate holding an offer from ${people.employer}.`,
-  'List every topic the question touches in concerns.',
-  `Set route to "answer" only if every topic is one of ${routineConcerns.join(', ')} and the approved facts answer it completely. Then write a short, warm answer in the second person that uses only those facts, and list them in factsUsed.`,
-  'Otherwise set route to "james", leave answer empty and factsUsed empty, and say in reason why the recruiter should answer.',
+  `List every topic the question touches in concerns, in this order: ${concernTypes.join(', ')}.`,
+  `Set route to "answer" only if every topic is one of ${routineConcerns.join(', ')} and approvedAnswers has an entry for each. Then set answer to those entries' answer texts copied exactly, character for character, joined by a single space in the order of concerns, and set factsUsed to those entries' factsUsed ids in the same order without duplicates. Never reword, shorten, extend or combine approved answers in any other way.`,
+  'Otherwise set route to "james", set answer to an empty string and factsUsed to an empty array, and say in reason why the recruiter should answer.',
   'Pay, equity, visas, relocation, benefits, negotiation and any decision always go to james. Never invent a fact, number or promise.',
 ].join(' ');
+
+/** The approved wording and facts for each routine topic, as the model must copy them. */
+export const approvedRoutineAnswers = Object.fromEntries(
+  routineConcerns.flatMap((concern) => {
+    const approved = routineAnswers[concern];
+    return approved
+      ? [[concern, { answer: approved.answer, factsUsed: approved.facts }]]
+      : [];
+  }),
+) as Partial<Record<ConcernType, { answer: string; factsUsed: OfferFactId[] }>>;
 
 export function offerAssistInput(question: string) {
   return JSON.stringify({
     question,
     approvedFacts: Object.fromEntries(factIds.map((id) => [id, offerFacts[id].value])),
+    approvedAnswers: approvedRoutineAnswers,
   });
 }

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { OfferAssist } from '../src/relay/offerAssist';
+import { offerAssistSchema, type OfferAssist } from '../src/relay/offerAssist';
 import offerAssistFunction, {
   handleOfferAssist,
   AnthropicMessagesProvider,
@@ -164,6 +164,104 @@ describe('offer assist server boundary', () => {
     expect(diagnostic).toHaveBeenCalledWith({
       event: 'offer-assist-fallback',
       category: 'validation-rejection',
+    });
+  });
+
+  // Production rejected Anthropic answers to routine questions because the
+  // model was asked to write its own wording, while Relay accepts only the
+  // approved wording and fact ids. The contract now supplies both.
+  describe('first-year scope question', () => {
+    const firstYearQuestion = 'What is the first-year scope of this role?';
+    const approvedFirstYear =
+      'In the first year you’d lead GPU scheduling for the shared inference platform and mentor two engineers. The first six weeks are a ramp, paired with the inference platform lead.';
+    const firstYearOutput = {
+      concerns: ['role-scope'],
+      route: 'answer',
+      answer: approvedFirstYear,
+      factsUsed: ['firstYear', 'onboarding'],
+      reason: 'The approved first-year and onboarding facts answer this.',
+    };
+    const stubAnthropic = (output: unknown) => {
+      vi.stubEnv('ANTHROPIC_API_KEY', 'test-key');
+      const upstream = vi.fn(async () => anthropicMessage(JSON.stringify(output)));
+      vi.stubGlobal('fetch', upstream);
+      return upstream;
+    };
+
+    it('reaches live success for a valid Anthropic answer', async () => {
+      const upstream = stubAnthropic(firstYearOutput);
+      const diagnostic = captureDiagnostics();
+      const response = await offerAssistFunction.fetch(
+        request({ question: firstYearQuestion }),
+      );
+      expect(await response.json()).toEqual({
+        concerns: ['role-scope'],
+        route: 'answer',
+        answer: approvedFirstYear,
+        factsUsed: ['firstYear', 'onboarding'],
+        reason: 'Answered from the approved offer: first year, onboarding.',
+        mode: 'live',
+        status: 'success',
+      });
+      expect(diagnostic).not.toHaveBeenCalled();
+
+      // The request gives Anthropic the approved wording and constrains the
+      // reply to the Offer Assist schema.
+      const [, init] = upstream.mock.calls[0] as unknown as [string, RequestInit];
+      const body = JSON.parse(init.body as string);
+      expect(body.output_config).toEqual({
+        format: { type: 'json_schema', schema: offerAssistSchema },
+      });
+      expect(JSON.parse(body.messages[0].content).approvedAnswers['role-scope']).toEqual({
+        answer: approvedFirstYear,
+        factsUsed: ['firstYear', 'onboarding'],
+      });
+    });
+
+    it.each([
+      [
+        'an unsupported fact',
+        {
+          ...firstYearOutput,
+          answer: `${approvedFirstYear} You’d also be promoted after six months.`,
+        },
+      ],
+      [
+        'an invented number',
+        {
+          ...firstYearOutput,
+          answer: approvedFirstYear.replace('two engineers', 'five engineers'),
+        },
+      ],
+      [
+        'a reworded answer',
+        {
+          ...firstYearOutput,
+          answer:
+            'You’ll lead GPU scheduling for the inference platform and mentor two engineers.',
+        },
+      ],
+      ['an incomplete fact list', { ...firstYearOutput, factsUsed: ['firstYear'] }],
+      [
+        'a sensitive topic',
+        { ...firstYearOutput, answer: `${approvedFirstYear} There’s a bonus too.` },
+      ],
+    ])('rejects %s and falls back', async (_name, output) => {
+      stubAnthropic(output);
+      const diagnostic = captureDiagnostics();
+      const response = await offerAssistFunction.fetch(
+        request({ question: firstYearQuestion }),
+      );
+      expect(await response.json()).toMatchObject({
+        mode: 'replay',
+        status: 'provider-error',
+        route: 'answer',
+        answer: approvedFirstYear,
+      });
+      expect(diagnostic).toHaveBeenCalledWith({
+        event: 'offer-assist-fallback',
+        category: 'validation-rejection',
+      });
     });
   });
 

@@ -2,6 +2,7 @@ import {
   checkOfferAssist,
   offerAssistInput,
   offerAssistInstructions,
+  offerAssistSchema,
   scriptedOfferAssist,
   type OfferAssist,
 } from '../src/relay/offerAssist.js';
@@ -132,6 +133,9 @@ function buildAnthropicRequest(
       max_tokens: 400,
       system: `${offerAssistInstructions} Return only a JSON object with the required Offer Assist fields.`,
       messages: [{ role: 'user', content: offerAssistInput(question) }],
+      // Structured outputs: Anthropic constrains the reply to the Offer Assist
+      // schema (enums for concerns, route and fact ids). Relay still validates.
+      output_config: { format: { type: 'json_schema', schema: offerAssistSchema } },
     }),
   };
 }

@@ -45,6 +45,63 @@ try {
       mode: 'replay',
       status: 'fallback',
     });
+
+    // Live path with a mocked Anthropic Messages response: a routine question
+    // answered with the approved wording must reach mode "live".
+    const firstYear =
+      'In the first year you’d lead GPU scheduling for the shared inference platform and mentor two engineers. The first six weeks are a ramp, paired with the inference platform lead.';
+    const realFetch = globalThis.fetch;
+    process.env.ANTHROPIC_API_KEY = 'native-check-key';
+    let sentBody;
+    globalThis.fetch = async (_url, init) => {
+      sentBody = JSON.parse(init.body);
+      return new Response(
+        JSON.stringify({
+          id: 'msg_native_check',
+          type: 'message',
+          role: 'assistant',
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                concerns: ['role-scope'],
+                route: 'answer',
+                answer: firstYear,
+                factsUsed: ['firstYear', 'onboarding'],
+                reason: 'The approved first-year and onboarding facts answer this.',
+              }),
+            },
+          ],
+          stop_reason: 'end_turn',
+        }),
+        { headers: { 'content-type': 'application/json' } },
+      );
+    };
+    try {
+      const live = await offerAssistFunction.fetch(
+        new Request('https://relay.example/api/offer-assist', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            question: 'What is the first-year scope of this role?',
+          }),
+        }),
+        { waitUntil: () => undefined },
+      );
+      assert.equal(live.status, 200);
+      assert.deepEqual(await live.json(), {
+        concerns: ['role-scope'],
+        route: 'answer',
+        answer: firstYear,
+        factsUsed: ['firstYear', 'onboarding'],
+        reason: 'Answered from the approved offer: first year, onboarding.',
+        mode: 'live',
+        status: 'success',
+      });
+      assert.equal(sentBody.output_config.format.type, 'json_schema');
+    } finally {
+      globalThis.fetch = realFetch;
+    }
   } finally {
     if (oldKey === undefined) delete process.env.ANTHROPIC_API_KEY;
     else process.env.ANTHROPIC_API_KEY = oldKey;
