@@ -34,8 +34,11 @@ const modelReturns = (output: unknown) =>
         ),
     ),
   );
+const captureDiagnostics = () =>
+  vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
 });
@@ -50,8 +53,13 @@ describe('offer assist server boundary', () => {
 
   it('uses offline triage when no key is configured', async () => {
     vi.stubEnv('ANTHROPIC_API_KEY', '');
+    const diagnostic = captureDiagnostics();
     const response = await handleOfferAssist(request());
     expect(await response.json()).toMatchObject({ mode: 'replay', status: 'fallback' });
+    expect(diagnostic).toHaveBeenCalledWith({
+      event: 'offer-assist-fallback',
+      category: 'missing-key',
+    });
   });
 
   it('falls back when the provider fails', async () => {
@@ -60,10 +68,15 @@ describe('offer assist server boundary', () => {
         throw new Error('timeout');
       }),
     };
+    const diagnostic = captureDiagnostics();
     const response = await handleOfferAssist(request(), provider);
     expect(await response.json()).toMatchObject({
       mode: 'replay',
       status: 'provider-error',
+    });
+    expect(diagnostic).toHaveBeenCalledWith({
+      event: 'offer-assist-fallback',
+      category: 'provider-error',
     });
   });
 
@@ -100,10 +113,18 @@ describe('offer assist server boundary', () => {
         }),
       }),
     );
+    const [, init] = vi.mocked(fetch).mock.calls[0]!;
+    expect(JSON.parse(init!.body as string)).toMatchObject({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 400,
+      system: expect.any(String),
+      messages: [{ role: 'user', content: expect.any(String) }],
+    });
   });
 
-  it('rejects model output that invents a number, and falls back', async () => {
+  it('logs Relay validation rejection without candidate data, and falls back', async () => {
     modelReturns({ ...live, answer: 'Start on 9 November with a bonus.' });
+    const diagnostic = captureDiagnostics();
     const response = await handleOfferAssist(
       request(),
       new AnthropicMessagesProvider('test-key'),
@@ -112,13 +133,18 @@ describe('offer assist server boundary', () => {
       mode: 'replay',
       status: 'provider-error',
     });
+    expect(diagnostic).toHaveBeenCalledWith({
+      event: 'offer-assist-fallback',
+      category: 'validation-rejection',
+    });
   });
 
-  it('falls back after an Anthropic provider failure', async () => {
+  it('logs Anthropic HTTP status without response data, and falls back', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => new Response('unavailable', { status: 503 })),
     );
+    const diagnostic = captureDiagnostics();
     const response = await handleOfferAssist(
       request(),
       new AnthropicMessagesProvider('test-key'),
@@ -128,12 +154,17 @@ describe('offer assist server boundary', () => {
       status: 'provider-error',
       answer: live.answer,
     });
+    expect(diagnostic).toHaveBeenCalledWith({
+      event: 'offer-assist-fallback',
+      category: 'provider-http',
+      providerStatus: 503,
+    });
   });
 
   it.each([
     ['malformed output', 'not JSON'],
     ['empty output', undefined],
-  ])('falls back after %s from Anthropic', async (_name, output) => {
+  ])('logs %s from Anthropic without provider content', async (_name, output) => {
     vi.stubGlobal(
       'fetch',
       vi.fn(
@@ -141,6 +172,7 @@ describe('offer assist server boundary', () => {
           new Response(JSON.stringify({ content: [{ type: 'text', text: output }] })),
       ),
     );
+    const diagnostic = captureDiagnostics();
     const response = await handleOfferAssist(
       request(),
       new AnthropicMessagesProvider('test-key'),
@@ -149,6 +181,10 @@ describe('offer assist server boundary', () => {
       mode: 'replay',
       status: 'provider-error',
       answer: live.answer,
+    });
+    expect(diagnostic).toHaveBeenCalledWith({
+      event: 'offer-assist-fallback',
+      category: 'malformed-response',
     });
   });
 
@@ -163,6 +199,7 @@ describe('offer assist server boundary', () => {
           ),
       ),
     );
+    const diagnostic = captureDiagnostics();
     const responsePromise = handleOfferAssist(
       request(),
       new AnthropicMessagesProvider('test-key', undefined, 1),
@@ -175,6 +212,28 @@ describe('offer assist server boundary', () => {
       status: 'provider-error',
       answer: live.answer,
     });
+    expect(diagnostic).toHaveBeenCalledWith({
+      event: 'offer-assist-fallback',
+      category: 'timeout',
+    });
+  });
+
+  it('never includes secrets or the question in fallback diagnostics', async () => {
+    const privateQuestion = 'private candidate question that must not be logged';
+    const diagnostic = captureDiagnostics();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('unavailable', { status: 401 })),
+    );
+    await handleOfferAssist(
+      request({ question: privateQuestion }),
+      new AnthropicMessagesProvider('test-key-that-must-not-be-logged'),
+    );
+    const logged = JSON.stringify(diagnostic.mock.calls);
+    expect(logged).not.toContain(privateQuestion);
+    expect(logged).not.toContain('test-key-that-must-not-be-logged');
+    expect(logged).not.toContain('unavailable');
+    expect(logged).not.toContain('x-api-key');
   });
 
   it.each([
