@@ -1,5 +1,6 @@
 import {
   checkOfferAssist,
+  composeOfferAssist,
   offerAssistInput,
   offerAssistInstructions,
   offerAssistSchema,
@@ -7,8 +8,9 @@ import {
   type OfferAssist,
 } from '../src/relay/offerAssist.js';
 
-// Server-side only. The key never reaches the browser, and the browser never
-// receives model output that hasn't passed `checkOfferAssist`.
+// Server-side only. The key never reaches the browser. Anthropic only classifies
+// the question; Relay writes the candidate-facing answer from approved wording,
+// and the browser never receives a result that hasn't passed `checkOfferAssist`.
 
 export interface OfferAssistProvider {
   assist(question: string): Promise<OfferAssist>;
@@ -46,7 +48,7 @@ export interface OfferAssistProviderDependencies {
   buildRequest?: (question: string, apiKey: string, model: string) => RequestInit;
   fetch?: typeof fetch;
   parseModelText?: typeof JSON.parse;
-  validate?: typeof checkOfferAssist;
+  validate?: typeof composeOfferAssist;
 }
 
 export interface OfferAssistHttpDependencies {
@@ -131,10 +133,11 @@ function buildAnthropicRequest(
     body: JSON.stringify({
       model,
       max_tokens: 400,
-      system: `${offerAssistInstructions} Return only a JSON object with the required Offer Assist fields.`,
+      system: `${offerAssistInstructions} Return only a JSON object with the required Offer Assist classification fields.`,
       messages: [{ role: 'user', content: offerAssistInput(question) }],
       // Structured outputs: Anthropic constrains the reply to the Offer Assist
-      // schema (enums for concerns, route and fact ids). Relay still validates.
+      // classification schema (enums for concerns, route and fact ids). Relay
+      // writes the answer itself and still validates.
       output_config: { format: { type: 'json_schema', schema: offerAssistSchema } },
     }),
   };
@@ -214,7 +217,8 @@ export class AnthropicMessagesProvider implements OfferAssistProvider {
           });
         }
         stage = 'relay-validation';
-        const checked = (this.dependencies.validate ?? checkOfferAssist)(
+        // Relay writes the answer from approved wording, then checks the result.
+        const checked = (this.dependencies.validate ?? composeOfferAssist)(
           question,
           output,
         );

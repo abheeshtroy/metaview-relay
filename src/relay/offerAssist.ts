@@ -4,9 +4,11 @@ import { callSlot, offerFacts, people, type OfferFactId } from './fixtures.js';
 // answer on its own only when the question is routine and AutoFarm's approved offer
 // answers it fully. Pay, equity, visas, benefits and anything uncertain go to James.
 //
-// A live model proposes; `checkOfferAssist` decides. The server and the reducer
-// both run it, so an answer that cites the wrong facts, mentions a number the
-// facts don't contain, or touches a sensitive topic never reaches Jeremy.
+// A live model only classifies: topics, answer-or-James, and approved fact ids.
+// Relay writes every candidate-facing word from its approved answers
+// (`composeOfferAssist`), and `checkOfferAssist` decides. The server and the
+// reducer both run it, so an answer that cites the wrong facts, mentions a number
+// the facts don't contain, or touches a sensitive topic never reaches Jeremy.
 
 export type ConcernType =
   | 'start-date'
@@ -194,6 +196,11 @@ function routineAnswerFor(concerns: ConcernType[]) {
   };
 }
 
+/** Relay's deterministic reading plus the model's, so no detected topic is lost. */
+function mergeConcerns(question: string, concerns: ConcernType[]) {
+  return [...new Set([...detectConcerns(question), ...concerns])];
+}
+
 function sameIds<T extends string>(actual: T[], expected: T[]) {
   return (
     actual.length === expected.length &&
@@ -228,9 +235,7 @@ export function checkOfferAssist(
   // Keep Relay's deterministic reading as well as the model's interpretation.
   // In particular, a combined pay + start-date question must not lose the
   // start-date part just because pay requires James.
-  const merged = [
-    ...new Set([...detectConcerns(question), ...(concerns as ConcernType[])]),
-  ];
+  const merged = mergeConcerns(question, concerns as ConcernType[]);
   if (data.route === 'james') {
     // A routed question carries interpretation only. It never carries a hidden
     // proposed answer or facts that could be mistaken for James's approval.
@@ -265,6 +270,53 @@ export function checkOfferAssist(
   };
 }
 
+/**
+ * Builds the candidate-facing result from a live model's classification. The
+ * model chooses topics, route and approved fact ids; Relay writes the answer
+ * from its approved routine answers, so any answer text the model sends is
+ * ignored. The model's fact ids must be exactly the facts behind that approved
+ * answer (order aside), and the result still has to pass `checkOfferAssist`.
+ */
+export function composeOfferAssist(
+  question: string,
+  value: unknown,
+): Omit<OfferAssist, 'mode' | 'status'> | null {
+  if (!value || typeof value !== 'object') return null;
+  const { concerns, route, factsUsed } = value as Record<string, unknown>;
+  if (
+    !Array.isArray(concerns) ||
+    !concerns.every((c) => concernTypes.includes(c as ConcernType)) ||
+    !Array.isArray(factsUsed) ||
+    !factsUsed.every((f) => factIds.includes(f as OfferFactId))
+  )
+    return null;
+  const merged = mergeConcerns(question, concerns as ConcernType[]);
+  if (route === 'james')
+    return checkOfferAssist(question, {
+      concerns,
+      route,
+      answer: '',
+      factsUsed,
+      reason: jamesReason(merged),
+    });
+  if (route !== 'answer') return null;
+  const approved = routineAnswerFor(merged);
+  const cited = new Set(factsUsed as OfferFactId[]);
+  if (
+    !approved ||
+    cited.size !== approved.factsUsed.length ||
+    !approved.factsUsed.every((fact) => cited.has(fact))
+  )
+    return null;
+  return checkOfferAssist(question, {
+    concerns,
+    route,
+    answer: approved.answer,
+    factsUsed: approved.factsUsed,
+    reason: answerReason(approved.factsUsed),
+  });
+}
+
 export type ReplyMode = 'written' | 'call';
 
 /** How James most likely wants to reply, before he chooses. */
@@ -291,28 +343,25 @@ export function replyDraft(assist: OfferAssist, mode: ReplyMode): string {
 export const offerAssistSchema = {
   type: 'object',
   additionalProperties: false,
-  required: ['concerns', 'route', 'answer', 'factsUsed', 'reason'],
+  required: ['concerns', 'route', 'factsUsed'],
   properties: {
     concerns: { type: 'array', items: { type: 'string', enum: concernTypes } },
     route: { type: 'string', enum: ['answer', 'james'] },
-    answer: { type: 'string' },
     factsUsed: { type: 'array', items: { type: 'string', enum: factIds } },
-    reason: { type: 'string' },
   },
 } as const;
 
-// Relay only lets a routine answer through when it is exactly the approved
-// wording for those topics (see `checkOfferAssist`). The model therefore picks
-// topics and copies approved answers; it never writes its own answer text.
+// The model classifies; it never writes candidate-facing text. Relay builds the
+// answer from `approvedAnswers` itself (see `composeOfferAssist`).
 export const offerAssistInstructions = [
-  `You triage one question from ${people.candidate.first}, a candidate holding an offer from ${people.employer}.`,
+  `You triage one question from ${people.candidate.first}, a candidate holding an offer from ${people.employer}. You classify it; Relay writes any reply itself from approvedAnswers.`,
   `List every topic the question touches in concerns, in this order: ${concernTypes.join(', ')}.`,
-  `Set route to "answer" only if every topic is one of ${routineConcerns.join(', ')} and approvedAnswers has an entry for each. Then set answer to those entries' answer texts copied exactly, character for character, joined by a single space in the order of concerns, and set factsUsed to those entries' factsUsed ids in the same order without duplicates. Never reword, shorten, extend or combine approved answers in any other way.`,
-  'Otherwise set route to "james", set answer to an empty string and factsUsed to an empty array, and say in reason why the recruiter should answer.',
-  'Pay, equity, visas, relocation, benefits, negotiation and any decision always go to james. Never invent a fact, number or promise.',
+  `Set route to "answer" only if every topic is one of ${routineConcerns.join(', ')}, approvedAnswers has an entry for each, and those entries fully answer the question. Then set factsUsed to the factsUsed ids of those entries.`,
+  'Otherwise set route to "james" and factsUsed to an empty array.',
+  'Pay, equity, visas, relocation, benefits, negotiation, anything uncertain and any decision always go to james.',
 ].join(' ');
 
-/** The approved wording and facts for each routine topic, as the model must copy them. */
+/** The approved wording and facts for each routine topic, which Relay sends as the answer. */
 export const approvedRoutineAnswers = Object.fromEntries(
   routineConcerns.flatMap((concern) => {
     const approved = routineAnswers[concern];

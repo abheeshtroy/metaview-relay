@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { offerPresets } from './fixtures';
 import {
+  approvedRoutineAnswers,
   checkOfferAssist,
+  composeOfferAssist,
   defaultReplyMode,
   detectConcerns,
   replyDraft,
@@ -121,6 +123,85 @@ describe('checkOfferAssist', () => {
         answer: 'We can sponsor you.',
         factsUsed: [],
         reason: 'James needs to confirm.',
+      }),
+    ).toBeNull();
+  });
+});
+
+describe('composeOfferAssist', () => {
+  const question = 'What is the first-year scope of this role?';
+  const approved = approvedRoutineAnswers['role-scope']!;
+  const classified = {
+    concerns: ['role-scope'],
+    route: 'answer',
+    factsUsed: ['firstYear', 'onboarding'],
+  };
+
+  it('writes the approved answer itself, ignoring any model answer text', () => {
+    for (const answer of [undefined, '', 'You’ll mentor five engineers.']) {
+      const composed = composeOfferAssist(question, { ...classified, answer });
+      expect(composed).toEqual({
+        concerns: ['role-scope'],
+        route: 'answer',
+        answer: approved.answer,
+        factsUsed: ['firstYear', 'onboarding'],
+        reason: 'Answered from the approved offer: first year, onboarding.',
+      });
+      // The server-built result is itself a valid checked assist.
+      expect(checkOfferAssist(question, composed)).toEqual(composed);
+    }
+  });
+
+  it('requires exactly the approved facts, in any order', () => {
+    expect(
+      composeOfferAssist(question, {
+        ...classified,
+        factsUsed: ['onboarding', 'firstYear'],
+      })?.factsUsed,
+    ).toEqual(['firstYear', 'onboarding']);
+    for (const factsUsed of [[], ['firstYear'], ['firstYear', 'onboarding', 'base']])
+      expect(composeOfferAssist(question, { ...classified, factsUsed })).toBeNull();
+  });
+
+  it('never answers a sensitive, unsupported or malformed classification', () => {
+    expect(
+      composeOfferAssist('What about my salary and start date?', {
+        concerns: ['start-date'],
+        route: 'answer',
+        factsUsed: ['startWindow'],
+      }),
+    ).toBeNull();
+    expect(
+      composeOfferAssist('Do you like dogs?', {
+        concerns: ['start-date'],
+        route: 'answer',
+        factsUsed: ['startWindow'],
+      }),
+    ).toBeNull();
+    expect(composeOfferAssist(question, null)).toBeNull();
+    expect(composeOfferAssist(question, { ...classified, route: 'maybe' })).toBeNull();
+    expect(composeOfferAssist(question, { ...classified, concerns: [] })).toBeNull();
+  });
+
+  it('routes to James without an answer or facts', () => {
+    expect(
+      composeOfferAssist('Could you sponsor my visa?', {
+        concerns: ['immigration'],
+        route: 'james',
+        factsUsed: [],
+        answer: 'We can sponsor you.',
+      }),
+    ).toEqual({
+      concerns: ['immigration'],
+      route: 'james',
+      factsUsed: [],
+      reason: 'Visa questions always go to James.',
+    });
+    expect(
+      composeOfferAssist('Could you sponsor my visa?', {
+        concerns: ['immigration'],
+        route: 'james',
+        factsUsed: ['role'],
       }),
     ).toBeNull();
   });
