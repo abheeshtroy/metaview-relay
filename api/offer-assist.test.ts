@@ -80,6 +80,93 @@ describe('offer assist server boundary', () => {
     expect(diagnostic).not.toHaveBeenCalled();
   });
 
+  // Real Anthropic responses commonly wrap the requested JSON object in a
+  // Markdown code fence. Bare-JSON mocks hid the production SyntaxError.
+  const anthropicMessage = (text: string) =>
+    new Response(
+      JSON.stringify({
+        id: 'msg_test',
+        type: 'message',
+        role: 'assistant',
+        model: 'claude-haiku-4-5-20251001',
+        content: [{ type: 'text', text }],
+        stop_reason: 'end_turn',
+        stop_sequence: null,
+        usage: { input_tokens: 512, output_tokens: 96 },
+      }),
+      { headers: { 'content-type': 'application/json' } },
+    );
+  const { mode: _liveMode, status: _liveStatus, ...modelOutput } = live;
+
+  it('reaches live success when Anthropic fences its JSON answer', async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', 'test-key');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        anthropicMessage('```json\n' + JSON.stringify(modelOutput, null, 2) + '\n```'),
+      ),
+    );
+    const diagnostic = captureDiagnostics();
+    const response = await offerAssistFunction.fetch(request());
+    expect(await response.json()).toMatchObject({
+      mode: 'live',
+      status: 'success',
+      route: 'answer',
+      answer: live.answer,
+      factsUsed: ['startWindow'],
+    });
+    expect(diagnostic).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['prose around a fence', 'Here you go:\n```json\n{}\n```'],
+    ['an unclosed fence', '```json\n{"route": "answer"}'],
+    ['malformed JSON inside a fence', '```json\n{not json}\n```'],
+    ['plain prose', 'Any Monday in November works.'],
+  ])('still falls back safely on %s', async (_name, text) => {
+    vi.stubEnv('ANTHROPIC_API_KEY', 'test-key');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => anthropicMessage(text)),
+    );
+    const diagnostic = captureDiagnostics();
+    const response = await offerAssistFunction.fetch(request());
+    expect(await response.json()).toMatchObject({
+      mode: 'replay',
+      status: 'provider-error',
+      answer: live.answer,
+    });
+    expect(diagnostic).toHaveBeenCalledWith({
+      event: 'offer-assist-fallback',
+      category: 'json-parsing-failure',
+      errorName: 'SyntaxError',
+    });
+  });
+
+  it('still rejects a fenced answer that fails Relay validation', async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', 'test-key');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        anthropicMessage(
+          '```json\n' +
+            JSON.stringify({ ...modelOutput, answer: 'Start whenever, with a bonus.' }) +
+            '\n```',
+        ),
+      ),
+    );
+    const diagnostic = captureDiagnostics();
+    const response = await offerAssistFunction.fetch(request());
+    expect(await response.json()).toMatchObject({
+      mode: 'replay',
+      status: 'provider-error',
+    });
+    expect(diagnostic).toHaveBeenCalledWith({
+      event: 'offer-assist-fallback',
+      category: 'validation-rejection',
+    });
+  });
+
   it('returns a provider’s checked output', async () => {
     const provider: OfferAssistProvider = { assist: vi.fn(async () => live) };
     const response = await handleOfferAssist(request(), provider);
