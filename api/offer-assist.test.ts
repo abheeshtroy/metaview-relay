@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { offerAssistSchema, type OfferAssist } from '../src/relay/offerAssist';
+import {
+  checkOfferAssist,
+  offerAssistSchema,
+  type OfferAssist,
+} from '../src/relay/offerAssist';
 import offerAssistFunction, {
   handleOfferAssist,
   AnthropicMessagesProvider,
@@ -143,14 +147,14 @@ describe('offer assist server boundary', () => {
     });
   });
 
-  it('still rejects a fenced answer that fails Relay validation', async () => {
+  it('still rejects a fenced classification that fails Relay validation', async () => {
     vi.stubEnv('ANTHROPIC_API_KEY', 'test-key');
     vi.stubGlobal(
       'fetch',
       vi.fn(async () =>
         anthropicMessage(
           '```json\n' +
-            JSON.stringify({ ...modelOutput, answer: 'Start whenever, with a bonus.' }) +
+            JSON.stringify({ ...modelOutput, factsUsed: ['startWindow', 'base'] }) +
             '\n```',
         ),
       ),
@@ -167,19 +171,27 @@ describe('offer assist server boundary', () => {
     });
   });
 
-  // Production rejected Anthropic answers to routine questions because the
-  // model was asked to write its own wording, while Relay accepts only the
-  // approved wording and fact ids. The contract now supplies both.
+  // Production rejected live answers because Anthropic had to reproduce
+  // Relay's approved wording byte for byte (including the ’ in “you’d”) and
+  // the exact fact-id order. Anthropic now only classifies; Relay writes the
+  // answer from its approved table and validates the result.
   describe('first-year scope question', () => {
     const firstYearQuestion = 'What is the first-year scope of this role?';
     const approvedFirstYear =
       'In the first year you’d lead GPU scheduling for the shared inference platform and mentor two engineers. The first six weeks are a ramp, paired with the inference platform lead.';
-    const firstYearOutput = {
+    const classification = {
+      concerns: ['role-scope'],
+      route: 'answer',
+      factsUsed: ['firstYear', 'onboarding'],
+    };
+    const liveFirstYear = {
       concerns: ['role-scope'],
       route: 'answer',
       answer: approvedFirstYear,
       factsUsed: ['firstYear', 'onboarding'],
-      reason: 'The approved first-year and onboarding facts answer this.',
+      reason: 'Answered from the approved offer: first year, onboarding.',
+      mode: 'live',
+      status: 'success',
     };
     const stubAnthropic = (output: unknown) => {
       vi.stubEnv('ANTHROPIC_API_KEY', 'test-key');
@@ -187,76 +199,154 @@ describe('offer assist server boundary', () => {
       vi.stubGlobal('fetch', upstream);
       return upstream;
     };
+    const ask = (question = firstYearQuestion) =>
+      offerAssistFunction.fetch(request({ question }), { waitUntil: () => undefined });
 
-    it('reaches live success for a valid Anthropic answer', async () => {
-      const upstream = stubAnthropic(firstYearOutput);
+    it('returns the server-approved answer for a live classification', async () => {
+      const upstream = stubAnthropic(classification);
       const diagnostic = captureDiagnostics();
-      const response = await offerAssistFunction.fetch(
-        request({ question: firstYearQuestion }),
-      );
-      expect(await response.json()).toEqual({
-        concerns: ['role-scope'],
-        route: 'answer',
-        answer: approvedFirstYear,
-        factsUsed: ['firstYear', 'onboarding'],
-        reason: 'Answered from the approved offer: first year, onboarding.',
-        mode: 'live',
-        status: 'success',
-      });
+      const response = await ask();
+      expect(await response.json()).toEqual(liveFirstYear);
       expect(diagnostic).not.toHaveBeenCalled();
 
-      // The request gives Anthropic the approved wording and constrains the
-      // reply to the Offer Assist schema.
+      // Anthropic is asked to classify only: the schema has no answer field.
       const [, init] = upstream.mock.calls[0] as unknown as [string, RequestInit];
       const body = JSON.parse(init.body as string);
       expect(body.output_config).toEqual({
         format: { type: 'json_schema', schema: offerAssistSchema },
       });
-      expect(JSON.parse(body.messages[0].content).approvedAnswers['role-scope']).toEqual({
-        answer: approvedFirstYear,
-        factsUsed: ['firstYear', 'onboarding'],
-      });
+      expect(Object.keys(body.output_config.format.schema.properties)).toEqual([
+        'concerns',
+        'route',
+        'factsUsed',
+      ]);
     });
 
     it.each([
+      ['omits answer text', classification],
       [
-        'an unsupported fact',
+        'paraphrases with an ASCII apostrophe',
+        { ...classification, answer: approvedFirstYear.replace('’', "'") },
+      ],
+      [
+        'rewords the answer',
+        { ...classification, answer: 'You’ll lead GPU scheduling and mentor engineers.' },
+      ],
+      [
+        'adds an invented promise and number',
         {
-          ...firstYearOutput,
-          answer: `${approvedFirstYear} You’d also be promoted after six months.`,
+          ...classification,
+          answer: 'You’d mentor five engineers and get a bonus and promotion.',
+          reason: 'Guaranteed.',
         },
       ],
       [
-        'an invented number',
-        {
-          ...firstYearOutput,
-          answer: approvedFirstYear.replace('two engineers', 'five engineers'),
-        },
+        'cites the approved facts in another order',
+        { ...classification, factsUsed: ['onboarding', 'firstYear'] },
       ],
+    ])('answers with the approved text when the model %s', async (_name, output) => {
+      stubAnthropic(output);
+      const diagnostic = captureDiagnostics();
+      expect(await (await ask()).json()).toEqual(liveFirstYear);
+      expect(diagnostic).not.toHaveBeenCalled();
+    });
+
+    it('validates the server-built result at the HTTP revalidation gate', async () => {
+      stubAnthropic({ ...classification, answer: 'Anything at all.' });
+      const revalidate = vi.fn(checkOfferAssist);
+      const response = await handleOfferAssist(
+        request({ question: firstYearQuestion }),
+        new AnthropicMessagesProvider('test-key'),
+        { revalidate },
+      );
+      expect(await response.json()).toEqual(liveFirstYear);
+      expect(revalidate).toHaveBeenCalledOnce();
+      const [, provided] = revalidate.mock.calls[0]!;
+      expect(provided).toMatchObject({ answer: approvedFirstYear, mode: 'live' });
+      expect(revalidate.mock.results[0]!.value).not.toBeNull();
+    });
+
+    it.each([
+      ['an incomplete fact list', { ...classification, factsUsed: ['firstYear'] }],
       [
-        'a reworded answer',
-        {
-          ...firstYearOutput,
-          answer:
-            'You’ll lead GPU scheduling for the inference platform and mentor two engineers.',
-        },
+        'a fact the approved answer does not use',
+        { ...classification, factsUsed: ['firstYear', 'onboarding', 'base'] },
       ],
-      ['an incomplete fact list', { ...firstYearOutput, factsUsed: ['firstYear'] }],
+      ['an unrelated fact', { ...classification, factsUsed: ['startWindow'] }],
+      ['no facts', { ...classification, factsUsed: [] }],
+      ['an unknown fact id', { ...classification, factsUsed: ['signingBonus'] }],
+      ['an unknown concern', { ...classification, concerns: ['promotion'] }],
+      ['no concerns', { ...classification, concerns: [] }],
       [
-        'a sensitive topic',
-        { ...firstYearOutput, answer: `${approvedFirstYear} There’s a bonus too.` },
+        'a topic with no approved answer',
+        { ...classification, concerns: ['role-scope', 'other'] },
       ],
+      ['an unknown route', { ...classification, route: 'auto-reply' }],
     ])('rejects %s and falls back', async (_name, output) => {
       stubAnthropic(output);
       const diagnostic = captureDiagnostics();
-      const response = await offerAssistFunction.fetch(
-        request({ question: firstYearQuestion }),
-      );
-      expect(await response.json()).toMatchObject({
+      expect(await (await ask()).json()).toMatchObject({
         mode: 'replay',
         status: 'provider-error',
         route: 'answer',
         answer: approvedFirstYear,
+      });
+      expect(diagnostic).toHaveBeenCalledWith({
+        event: 'offer-assist-fallback',
+        category: 'validation-rejection',
+      });
+    });
+
+    it.each([
+      ['pay', 'Is there flexibility on the base salary?', 'compensation'],
+      ['equity', 'How do the RSUs vest?', 'equity'],
+      ['visa', 'Will you sponsor my H-1B?', 'immigration'],
+      ['negotiation', 'Can we negotiate the start date?', 'compensation'],
+      ['benefits', 'What does health insurance look like?', 'benefits'],
+      ['unsupported', 'Can I bring my dog to work?', 'other'],
+    ])('never lets the model answer a %s question', async (_name, question, concern) => {
+      // The model wrongly claims a routine topic with matching facts.
+      stubAnthropic({
+        concerns: ['start-date'],
+        route: 'answer',
+        factsUsed: ['startWindow'],
+      });
+      const diagnostic = captureDiagnostics();
+      const body = await (await ask(question)).json();
+      expect(body).toMatchObject({ route: 'james', mode: 'replay' });
+      expect(body.answer).toBeUndefined();
+      expect(body.concerns).toContain(concern);
+      expect(diagnostic).toHaveBeenCalledWith({
+        event: 'offer-assist-fallback',
+        category: 'validation-rejection',
+      });
+    });
+
+    it('ignores answer text on a question Anthropic sends to James', async () => {
+      stubAnthropic({
+        concerns: ['equity'],
+        route: 'james',
+        factsUsed: [],
+        answer: 'Your RSUs vest monthly.',
+      });
+      const body = await (await ask('How do the RSUs vest?')).json();
+      expect(body).toMatchObject({
+        concerns: ['equity'],
+        route: 'james',
+        factsUsed: [],
+        reason: 'Equity questions always go to James.',
+      });
+      expect(body.answer).toBeUndefined();
+      expect(JSON.stringify(body)).not.toContain('vest monthly');
+    });
+
+    it('rejects a James route that carries fact ids', async () => {
+      stubAnthropic({ concerns: ['equity'], route: 'james', factsUsed: ['equity'] });
+      const diagnostic = captureDiagnostics();
+      expect(await (await ask('How do the RSUs vest?')).json()).toMatchObject({
+        route: 'james',
+        mode: 'replay',
+        status: 'provider-error',
       });
       expect(diagnostic).toHaveBeenCalledWith({
         event: 'offer-assist-fallback',
@@ -346,7 +436,7 @@ describe('offer assist server boundary', () => {
   });
 
   it('logs Relay validation rejection without candidate data, and falls back', async () => {
-    modelReturns({ ...live, answer: 'Start on 9 November with a bonus.' });
+    modelReturns({ ...live, factsUsed: ['base'] });
     const diagnostic = captureDiagnostics();
     const response = await handleOfferAssist(
       request(),

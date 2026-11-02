@@ -46,59 +46,69 @@ try {
       status: 'fallback',
     });
 
-    // Live path with a mocked Anthropic Messages response: a routine question
-    // answered with the approved wording must reach mode "live".
+    // Live path with a mocked Anthropic Messages response. Anthropic only
+    // classifies; Relay writes the approved answer, whether the model omits
+    // answer text or paraphrases it.
     const firstYear =
       'In the first year you’d lead GPU scheduling for the shared inference platform and mentor two engineers. The first six weeks are a ramp, paired with the inference platform lead.';
     const realFetch = globalThis.fetch;
     process.env.ANTHROPIC_API_KEY = 'native-check-key';
-    let sentBody;
-    globalThis.fetch = async (_url, init) => {
-      sentBody = JSON.parse(init.body);
-      return new Response(
-        JSON.stringify({
-          id: 'msg_native_check',
-          type: 'message',
-          role: 'assistant',
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify({
-                concerns: ['role-scope'],
-                route: 'answer',
-                answer: firstYear,
-                factsUsed: ['firstYear', 'onboarding'],
-                reason: 'The approved first-year and onboarding facts answer this.',
-              }),
-            },
-          ],
-          stop_reason: 'end_turn',
-        }),
-        { headers: { 'content-type': 'application/json' } },
-      );
-    };
     try {
-      const live = await offerAssistFunction.fetch(
-        new Request('https://relay.example/api/offer-assist', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            question: 'What is the first-year scope of this role?',
+      for (const extra of [
+        {},
+        { answer: "In the first year you'd lead GPU scheduling and mentor engineers." },
+      ]) {
+        let sentBody;
+        globalThis.fetch = async (_url, init) => {
+          sentBody = JSON.parse(init.body);
+          return new Response(
+            JSON.stringify({
+              id: 'msg_native_check',
+              type: 'message',
+              role: 'assistant',
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    concerns: ['role-scope'],
+                    route: 'answer',
+                    factsUsed: ['firstYear', 'onboarding'],
+                    ...extra,
+                  }),
+                },
+              ],
+              stop_reason: 'end_turn',
+            }),
+            { headers: { 'content-type': 'application/json' } },
+          );
+        };
+        const live = await offerAssistFunction.fetch(
+          new Request('https://relay.example/api/offer-assist', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              question: 'What is the first-year scope of this role?',
+            }),
           }),
-        }),
-        { waitUntil: () => undefined },
-      );
-      assert.equal(live.status, 200);
-      assert.deepEqual(await live.json(), {
-        concerns: ['role-scope'],
-        route: 'answer',
-        answer: firstYear,
-        factsUsed: ['firstYear', 'onboarding'],
-        reason: 'Answered from the approved offer: first year, onboarding.',
-        mode: 'live',
-        status: 'success',
-      });
-      assert.equal(sentBody.output_config.format.type, 'json_schema');
+          { waitUntil: () => undefined },
+        );
+        assert.equal(live.status, 200);
+        assert.deepEqual(await live.json(), {
+          concerns: ['role-scope'],
+          route: 'answer',
+          answer: firstYear,
+          factsUsed: ['firstYear', 'onboarding'],
+          reason: 'Answered from the approved offer: first year, onboarding.',
+          mode: 'live',
+          status: 'success',
+        });
+        assert.equal(sentBody.output_config.format.type, 'json_schema');
+        assert.deepEqual(sentBody.output_config.format.schema.required, [
+          'concerns',
+          'route',
+          'factsUsed',
+        ]);
+      }
     } finally {
       globalThis.fetch = realFetch;
     }
