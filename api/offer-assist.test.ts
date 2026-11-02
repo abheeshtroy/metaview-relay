@@ -62,7 +62,7 @@ describe('offer assist server boundary', () => {
     });
   });
 
-  it('falls back when the provider fails', async () => {
+  it('classifies an unexpected provider runtime failure', async () => {
     const provider: OfferAssistProvider = {
       assist: vi.fn(async () => {
         throw new Error('timeout');
@@ -76,7 +76,8 @@ describe('offer assist server boundary', () => {
     });
     expect(diagnostic).toHaveBeenCalledWith({
       event: 'offer-assist-fallback',
-      category: 'provider-error',
+      category: 'unexpected-runtime-error',
+      errorName: 'Error',
     });
   });
 
@@ -161,16 +162,31 @@ describe('offer assist server boundary', () => {
     });
   });
 
-  it.each([
-    ['malformed output', 'not JSON'],
-    ['empty output', undefined],
-  ])('logs %s from Anthropic without provider content', async (_name, output) => {
+  it('classifies a network fetch failure', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(
-        async () =>
-          new Response(JSON.stringify({ content: [{ type: 'text', text: output }] })),
-      ),
+      vi.fn(async () => Promise.reject(new TypeError('offline'))),
+    );
+    const diagnostic = captureDiagnostics();
+    const response = await handleOfferAssist(
+      request(),
+      new AnthropicMessagesProvider('test-key'),
+    );
+    expect(await response.json()).toMatchObject({
+      mode: 'replay',
+      status: 'provider-error',
+    });
+    expect(diagnostic).toHaveBeenCalledWith({
+      event: 'offer-assist-fallback',
+      category: 'network-fetch-failure',
+      errorName: 'TypeError',
+    });
+  });
+
+  it('classifies invalid JSON from the Anthropic HTTP response', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('{not json')),
     );
     const diagnostic = captureDiagnostics();
     const response = await handleOfferAssist(
@@ -184,9 +200,43 @@ describe('offer assist server boundary', () => {
     });
     expect(diagnostic).toHaveBeenCalledWith({
       event: 'offer-assist-fallback',
-      category: 'malformed-response',
+      category: 'json-parsing-failure',
+      errorName: 'SyntaxError',
     });
   });
+
+  it('classifies invalid JSON inside Anthropic text output', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ content: [{ type: 'text', text: 'not JSON' }] })),
+      ),
+    );
+    const diagnostic = captureDiagnostics();
+    await handleOfferAssist(request(), new AnthropicMessagesProvider('test-key'));
+    expect(diagnostic).toHaveBeenCalledWith({
+      event: 'offer-assist-fallback',
+      category: 'json-parsing-failure',
+      errorName: 'SyntaxError',
+    });
+  });
+
+  it.each([null, { content: {} }, { content: [null] }])(
+    'classifies an unexpected Anthropic response shape',
+    async (payload) => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => new Response(JSON.stringify(payload))),
+      );
+      const diagnostic = captureDiagnostics();
+      await handleOfferAssist(request(), new AnthropicMessagesProvider('test-key'));
+      expect(diagnostic).toHaveBeenCalledWith({
+        event: 'offer-assist-fallback',
+        category: 'response-shape-failure',
+      });
+    },
+  );
 
   it('falls back when the Anthropic request times out', async () => {
     vi.useFakeTimers();
@@ -214,16 +264,18 @@ describe('offer assist server boundary', () => {
     });
     expect(diagnostic).toHaveBeenCalledWith({
       event: 'offer-assist-fallback',
-      category: 'timeout',
+      category: 'abort-timeout',
+      errorName: 'AbortError',
     });
   });
 
   it('never includes secrets or the question in fallback diagnostics', async () => {
     const privateQuestion = 'private candidate question that must not be logged';
+    const privateResponse = 'private provider response that must not be logged';
     const diagnostic = captureDiagnostics();
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => new Response('unavailable', { status: 401 })),
+      vi.fn(async () => new Response(privateResponse, { status: 401 })),
     );
     await handleOfferAssist(
       request({ question: privateQuestion }),
@@ -232,7 +284,7 @@ describe('offer assist server boundary', () => {
     const logged = JSON.stringify(diagnostic.mock.calls);
     expect(logged).not.toContain(privateQuestion);
     expect(logged).not.toContain('test-key-that-must-not-be-logged');
-    expect(logged).not.toContain('unavailable');
+    expect(logged).not.toContain(privateResponse);
     expect(logged).not.toContain('x-api-key');
   });
 
