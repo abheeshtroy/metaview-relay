@@ -16,10 +16,14 @@ export interface OfferAssistProvider {
 type OfferAssistDiagnostic =
   | { category: 'missing-key' }
   | { category: 'provider-http'; providerStatus: number }
-  | { category: 'timeout' }
-  | { category: 'malformed-response' }
+  | { category: 'abort-timeout'; errorName: 'AbortError' }
+  | { category: 'network-fetch-failure'; errorName: SafeErrorName }
+  | { category: 'json-parsing-failure'; errorName: 'SyntaxError' }
+  | { category: 'response-shape-failure' }
   | { category: 'validation-rejection' }
-  | { category: 'provider-error' };
+  | { category: 'unexpected-runtime-error'; errorName: SafeErrorName };
+
+type SafeErrorName = 'Error' | 'TypeError' | 'RangeError' | 'UnknownError';
 
 class OfferAssistProviderError extends Error {
   constructor(readonly diagnostic: OfferAssistDiagnostic) {
@@ -36,7 +40,21 @@ function logOfferAssistDiagnostic(diagnostic: OfferAssistDiagnostic) {
 function diagnosticFor(error: unknown): OfferAssistDiagnostic {
   return error instanceof OfferAssistProviderError
     ? error.diagnostic
-    : { category: 'provider-error' };
+    : {
+        category: 'unexpected-runtime-error',
+        errorName: safeErrorName(error),
+      };
+}
+
+function safeErrorName(error: unknown): SafeErrorName {
+  if (!(error instanceof Error)) return 'UnknownError';
+  if (error.name === 'TypeError') return 'TypeError';
+  if (error.name === 'RangeError') return 'RangeError';
+  return 'Error';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
 
 function responseJson(body: unknown, status = 200) {
@@ -57,8 +75,9 @@ export class AnthropicMessagesProvider implements OfferAssistProvider {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
+      let upstream: Response;
       try {
-        const upstream = await fetch('https://api.anthropic.com/v1/messages', {
+        upstream = await fetch('https://api.anthropic.com/v1/messages', {
           method: 'POST',
           signal: controller.signal,
           headers: {
@@ -73,36 +92,51 @@ export class AnthropicMessagesProvider implements OfferAssistProvider {
             messages: [{ role: 'user', content: offerAssistInput(question) }],
           }),
         });
-        if (!upstream.ok)
-          throw new OfferAssistProviderError({
-            category: 'provider-http',
-            providerStatus: upstream.status,
-          });
-        let payload: { content?: { type: string; text?: string }[] };
-        try {
-          payload = (await upstream.json()) as typeof payload;
-        } catch {
-          throw new OfferAssistProviderError({ category: 'malformed-response' });
-        }
-        const text = payload.content?.find((part) => part.type === 'text')?.text;
-        if (typeof text !== 'string')
-          throw new OfferAssistProviderError({ category: 'malformed-response' });
-        let output: unknown;
-        try {
-          output = JSON.parse(text);
-        } catch {
-          throw new OfferAssistProviderError({ category: 'malformed-response' });
-        }
-        const checked = checkOfferAssist(question, output);
-        if (!checked)
-          throw new OfferAssistProviderError({ category: 'validation-rejection' });
-        return { ...checked, mode: 'live', status: 'success' };
       } catch (error) {
-        if (error instanceof OfferAssistProviderError) throw error;
         if (controller.signal.aborted)
-          throw new OfferAssistProviderError({ category: 'timeout' });
-        throw error;
+          throw new OfferAssistProviderError({
+            category: 'abort-timeout',
+            errorName: 'AbortError',
+          });
+        throw new OfferAssistProviderError({
+          category: 'network-fetch-failure',
+          errorName: safeErrorName(error),
+        });
       }
+      if (!upstream.ok)
+        throw new OfferAssistProviderError({
+          category: 'provider-http',
+          providerStatus: upstream.status,
+        });
+      let payload: unknown;
+      try {
+        payload = await upstream.json();
+      } catch {
+        throw new OfferAssistProviderError({
+          category: 'json-parsing-failure',
+          errorName: 'SyntaxError',
+        });
+      }
+      if (!isRecord(payload) || !Array.isArray(payload.content))
+        throw new OfferAssistProviderError({ category: 'response-shape-failure' });
+      const text = payload.content.find(
+        (part): part is Record<string, unknown> => isRecord(part) && part.type === 'text',
+      )?.text;
+      if (typeof text !== 'string')
+        throw new OfferAssistProviderError({ category: 'response-shape-failure' });
+      let output: unknown;
+      try {
+        output = JSON.parse(text);
+      } catch {
+        throw new OfferAssistProviderError({
+          category: 'json-parsing-failure',
+          errorName: 'SyntaxError',
+        });
+      }
+      const checked = checkOfferAssist(question, output);
+      if (!checked)
+        throw new OfferAssistProviderError({ category: 'validation-rejection' });
+      return { ...checked, mode: 'live', status: 'success' };
     } finally {
       clearTimeout(timeout);
     }
